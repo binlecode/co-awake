@@ -406,7 +406,7 @@ lbl=$(echo "$out" | sed -n 's/.*label="\(.*\)".*/\1/p')
 gk "countdown displayed on the bar when keep-awake is windowed" \
    "$([ -n "$lbl" ] && echo "$lbl" | grep -qE '(29|30):[0-9]{2}' && echo 1 || echo 0)" "got: $lbl"
 
-out=$(CO_AWARENESS_LOG_SLOTS=1 CO_AWARENESS_EXIT_AFTER=3 $BIN --keep-awake 30m --display value 2>&1 | grep '^SLOTS' | tail -1)
+out=$(CO_AWARENESS_LOG_SLOTS=1 CO_AWARENESS_STATE_FILE="$SG" CO_AWARENESS_EXIT_AFTER=3 $BIN --load-source cpu --keep-awake 30m --display value 2>&1 | grep '^SLOTS' | tail -1)
 lbl=$(echo "$out" | sed -n 's/.*label="\(.*\)".*/\1/p')
 gk "countdown displayed beside telemetry when display=value" \
    "$([ -n "$lbl" ] && echo "$lbl" | grep -qE 'CPU .* (29|30):[0-9]{2}' && echo 1 || echo 0)" "got: $lbl"

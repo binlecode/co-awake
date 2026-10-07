@@ -10,7 +10,7 @@ import QuartzCore
 // Human-facing app version (semver). Surfaced in --help and the About dialog, and the anchor for
 // CHANGELOG.md releases. Bump this together with a new CHANGELOG entry and git tag.
 private enum AppInfo {
-    static let version = "2.4.1"
+    static let version = "2.4.2"
     static let name = "co-awareness"
     static let tagline = "An animated GIF in the macOS menu bar, its playback speed driven by live system load."
     static let copyright = "© 2026 Bin Le"
@@ -650,7 +650,11 @@ private enum Tuning {
     static let keepAwakeBarSageLight = NSColor(srgbRed: 0.392, green: 0.522, blue: 0.353, alpha: 1) // #64855A
     static let keepAwakeBarThickness: CGFloat = 2
 
-    // Post-modern minimal telemetry palette: Sage (low/cool), Sand (medium/warm), Terracotta (high/hot).
+    // Status bar trace-chart monochrome colors (calibrated for dark/light appearance).
+    static let traceChartMonoDark = NSColor(white: 0.90, alpha: 1.0)
+    static let traceChartMonoLight = NSColor(white: 0.20, alpha: 1.0)
+
+    // Legacy trace-chart mineral palette: Sage (low/cool), Sand (medium/warm), Terracotta (high/hot).
     // Desaturated, two-tone (lighter on dark appearance, deeper on light appearance).
     static let traceChartSageDark = NSColor(srgbRed: 0.54, green: 0.70, blue: 0.58, alpha: 1.0)       // #8AB394
     static let traceChartSageLight = NSColor(srgbRed: 0.34, green: 0.50, blue: 0.38, alpha: 1.0)      // #578061
@@ -723,7 +727,7 @@ private enum MenuTitle {
     static let keepAwakeOff = "Off"
     static let displayMode = "Display Mode"
     static let runnerPresets = "Runner Preset"
-    static let drivingSource = "Driving Telemetry Source"
+    static let drivingSource = "Selected Metric"
     static let indicatorTint = "Indicator Bar Tint"
     static let presets = "Presets"
     static let about = "About"
@@ -6757,23 +6761,9 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
     // MARK: - Status Bar Trace Chart
 
     private func traceChartColor(for value: Double, isBattery: Bool, dark: Bool) -> NSColor {
-        if isBattery {
-            if value < Tuning.batteryChartLowThreshold {
-                return dark ? Tuning.traceChartTerracottaDark : Tuning.traceChartTerracottaLight
-            }
-            if value < Tuning.batteryChargeMediumThreshold {
-                return dark ? Tuning.traceChartSandDark : Tuning.traceChartSandLight
-            }
-            return dark ? Tuning.traceChartSageDark : Tuning.traceChartSageLight
-        } else {
-            if value < Tuning.cpuStateLowThreshold {
-                return dark ? Tuning.traceChartSageDark : Tuning.traceChartSageLight
-            }
-            if value < Tuning.cpuStateMediumThreshold {
-                return dark ? Tuning.traceChartSandDark : Tuning.traceChartSandLight
-            }
-            return dark ? Tuning.traceChartTerracottaDark : Tuning.traceChartTerracottaLight
-        }
+        _ = value
+        _ = isBattery
+        return dark ? Tuning.traceChartMonoDark : Tuning.traceChartMonoLight
     }
 
     private func makeTraceChartImage(countdown: String?, appearance: NSAppearance?) -> NSImage {

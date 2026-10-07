@@ -691,7 +691,7 @@ To align with minimalist design and eliminate dual-slot scattering and lateral j
 
 Only ONE representation is active at any time:
 - `.gif` (Default): Shows the animated runner GIF. The CADisplayLink game loop runs.
-- `.trace`: Shows the compact 12-slot desaturated mineral sparkline chart (Sage/Sand/Terracotta). The game loop is stopped (0% CPU).
+- `.trace`: Shows the compact 12-slot monochrome sparkline chart (adaptive to dark/light appearance). The game loop is stopped (0% CPU).
 - `.value`: Shows the live monospaced telemetry reading (e.g. `CPU 45%`). The game loop is stopped (0% CPU).
 - **Freeze Handoff:** Under system Reduce Motion with mode set to `.gif`, the item temporarily hands off to `.value` mode so the user receives live telemetry.
 

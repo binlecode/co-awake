@@ -36,6 +36,18 @@ co-awareness is a CLI-launched app; the surface that MAJOR / MINOR / PATCH bumps
 Internal implementation details (Swift types, `Tuning` constants, file structure) are **not** part
 of the public API and may change in any release.
 
+## [2.4.2] - 2026-10-06
+
+### Changed
+
+- **Monochrome status bar trace sparkline.** The status bar trace chart (`--display trace`)
+  now renders in calibrated monochrome adaptive to Dark and Light appearances, replacing the
+  multi-color mineral palette for a cleaner, native menu bar look while keeping full sparkline
+  height dynamics and clear separation from Keep Awake indicator tints.
+- **Ergonomic driver submenu label.** Renamed the `Driving Telemetry Source ▸` submenu item to
+  `Selected Metric ▸`, replacing internal/academic telemetry jargon with standard, intuitive
+  metric selection terminology.
+
 ## [2.4.1] - 2026-09-30
 
 ### Removed
