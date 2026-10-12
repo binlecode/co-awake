@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>co-awareness</title>
+<title>co-awake</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>%F0%9F%90%8E</text></svg>">
 <style>
   :root{
@@ -589,9 +589,9 @@
 <div class="wrap">
   <header>
     <div class="topline">
-      <div class="brand"><span class="dot"></span> co-awareness</div>
+      <div class="brand"><span class="dot"></span> co-awake</div>
       <div class="nav">
-        <a class="gh-link" href="https://github.com/binlecode/co-awareness">GitHub&nbsp;↗</a>
+        <a class="gh-link" href="https://github.com/binlecode/co-awake">GitHub&nbsp;↗</a>
         <button class="theme-toggle" id="themeBtn" type="button" aria-label="Toggle color theme">◐ theme</button>
       </div>
     </div>
@@ -1020,30 +1020,30 @@
     </div>
     <div class="qs">
       <div class="terminal">
-        <div class="bar"><i></i><i></i><i></i><span>zsh — co-awareness</span></div>
+        <div class="bar"><i></i><i></i><i></i><span>zsh — awake</span></div>
 <pre><span class="c"># install — clone, compile, symlink onto PATH (no Xcode project, no Homebrew)</span>
-<span class="p">curl</span> -fsSL https://raw.githubusercontent.com/binlecode/co-awareness/main/install.sh | <span class="p">bash</span>
+<span class="p">curl</span> -fsSL https://raw.githubusercontent.com/binlecode/co-awake/main/install.sh | <span class="p">bash</span>
 
 <span class="c"># then run from anywhere — default preset, or pick a companion + load source</span>
-<span class="p">co-awareness</span> <span class="f">--preset</span> totoro <span class="f">--load-source</span> gpu
+<span class="p">awake</span> <span class="f">--preset</span> totoro <span class="f">--load-source</span> gpu
 
 <span class="c"># same command while it runs — the settings go to that instance, no restart, no second icon</span>
-<span class="p">co-awareness</span> <span class="f">--keep-awake</span> 30m <span class="f">--display</span> trace
+<span class="p">awake</span> <span class="f">--keep-awake</span> 30m <span class="f">--display</span> trace
 <span class="c"># {"action":"forwarded","pid":44213}</span>
 
 <span class="c"># ask the hardware once, as JSON — power source, kernel pressure, topology, bus bandwidth</span>
-<span class="p">co-awareness</span> snapshot
+<span class="p">awake</span> snapshot
 <span class="c"># {"v":1,"power_source":"ac","memory_pressure":"normal","cpu_pct":12.3,"cpu_p_cores":12,…,"ane_w":0.00}</span>
 
 <span class="c"># ask about the app instead — is one resident, is it holding the Mac awake</span>
-<span class="p">co-awareness</span> status
+<span class="p">awake</span> status
 <span class="c"># {"running":true,"pid":44213,"keep_awake":{"active":true,"remaining_s":1798}}</span>
 
 <span class="c"># start at login — per-user LaunchAgent, no root, no .app bundle</span>
 <span class="p">./scripts/install-login-item.sh</span> <span class="f">--preset</span> chihiro
 
 <span class="c"># clean uninstall — removes only what the installer created</span>
-<span class="p">~/.local/share/co-awareness/uninstall.sh</span></pre>
+<span class="p">~/.local/share/co-awake/uninstall.sh</span></pre>
       </div>
       <div class="facts">
         <div class="fact"><h4>A single Swift source file</h4><p>The whole app is <b>one <span class="mono">.swift</span> file</b> (~8,000 LOC) compiled by a zsh launcher with <span class="mono">swiftc -O</span>. No Xcode project, no SwiftPM package, no build system to learn.</p></div>
@@ -1052,7 +1052,7 @@
         <div class="fact"><h4>The one reading it refuses to poll</h4><p>Open the menu on a Mac with a battery and it reports <b>health, cycle count and capacity</b> — <span class="mono">100% health · 113 cycles</span>, <span class="mono">Normal · 8478/8579 mAh</span>, with the full breakdown on hover. Read straight from <b><span class="mono">AppleSmartBattery</span></b> in the IORegistry, <b>no privileges, no helper</b>. And unlike every other figure here it is <b>never sampled on a timer</b>: health moves over months, so it's read the moment you open the menu and dropped when you close it. A desktop Mac with no battery sees the menu exactly as it was.</p></div>
         <div class="fact"><h4>Three answers for scripts and agents</h4><p>The core serves headless consumers directly. <span class="mono">snapshot</span> prints every physical reading as <b>one line of JSON</b> (including AC status and kernel memory pressure); <span class="mono">status</span> inspects resident hold state; and <span class="mono">start</span> is idempotent — run against an instance already up, it forwards the settings through a per-request spool and a POSIX signal. Pure unprivileged CLI, zero socket debt.</p></div>
         <div class="fact"><h4>Data-driven presets</h4><p>Keyword, menu title, and speed range all live in <b><span class="mono">presets.json</span></b> (width comes from the GIF's own aspect ratio). Add a preset by editing data — zero Swift changes.</p></div>
-        <div class="fact"><h4>Checks for its own updates</h4><p>On launch it reads your checkout's origin release tags — <b>the only network call the app ever makes</b>. A newer tag shows an <span class="mono">Update available</span> menu item; applying it is a deliberate <b>two-click</b> action (<span class="mono">git pull --ff-only</span>), never automatic. It then <b>compiles the new version while still running</b> — the menu reads <span class="mono">Building v2.4.2…</span> — so the <span class="mono">Restart</span> that follows takes about a second instead of leaving an empty menu bar waiting on a build. Settings and the preset you picked carry over.</p></div>
+        <div class="fact"><h4>Checks for its own updates</h4><p>On launch it reads your checkout's origin release tags — <b>the only network call the app ever makes</b>. A newer tag shows an <span class="mono">Update available</span> menu item; applying it is a deliberate <b>two-click</b> action (<span class="mono">git pull --ff-only</span>), never automatic. It then <b>compiles the new version while still running</b> — the menu reads <span class="mono">Building v3.0.0…</span> — so the <span class="mono">Restart</span> that follows takes about a second instead of leaving an empty menu bar waiting on a build. Settings and the preset you picked carry over.</p></div>
         <div class="fact"><h4>One line in, one line out</h4><p>Install with a single <span class="mono">curl … | bash</span> — it clones, compiles, and symlinks onto your <span class="mono">PATH</span>; <span class="mono">uninstall.sh</span> reverses exactly what it created. <b>Open source (MIT)</b>, no signing or Homebrew.</p></div>
       </div>
     </div>
@@ -1061,8 +1061,8 @@
   <footer>
     <div class="foot">
       <div class="badges">
-        <a class="badge badge-link" href="https://github.com/binlecode/co-awareness">github.com/binlecode/co-awareness&nbsp;↗</a>
-        <span class="badge">v2.4.2</span>
+        <a class="badge badge-link" href="https://github.com/binlecode/co-awake">github.com/binlecode/co-awake&nbsp;↗</a>
+        <span class="badge">v3.0.0</span>
         <span class="badge">MIT · open source</span>
         <span class="badge">Swift · AppKit</span>
         <span class="badge">macOS 14+ · display link</span>

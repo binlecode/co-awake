@@ -13,7 +13,7 @@
 //
 // Why hold one here instead of just running `caffeinate -i -t N`? Because a row is keyed on owner+type,
 // and any machine may already have a caffeinate holding one (an agent's renewal loop, another user's
-// co-awareness, the developer's own instance) — so a `caffeinate` row proves nothing about
+// co-awake, the developer's own instance) — so a `caffeinate` row proves nothing about
 // detection, and its presence after expiry proves nothing about the retention window. This binary's name
 // is its own row, so both become deterministic. It also exercises the real API rather than a mock of it.
 //
@@ -42,13 +42,13 @@ let rc: IOReturn = {
         return IOPMAssertionCreateWithName(
             sleepType as CFString,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
-            "co-awareness test fixture" as CFString,
+            "co-awake test fixture" as CFString,
             &assertionID
         )
     }
     let properties: [String: Any] = [
         "AssertType": sleepType,
-        "AssertName": "co-awareness test fixture",
+        "AssertName": "co-awake test fixture",
         "TimeoutSeconds": timeout,
         "TimeoutAction": "TimeoutActionRelease",
     ]

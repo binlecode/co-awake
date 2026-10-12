@@ -1,5 +1,5 @@
 #!/bin/bash
-# QA harness for co-awareness — the release gate.
+# QA harness for co-awake — the release gate.
 # Run from the repo root:  tests/qa.sh
 #
 # Coverage tiers (the boundary CI is built around — see README "Testing & CI"):
@@ -17,7 +17,7 @@
 #             they need an active WindowServer (GUI) session. Fine on a logged-in Mac; best-effort on
 #             hosted runners.
 #   launcher  §6 launcher wrapper: singleton guard, `build`, and the build's safety against a
-#             live instance. Disruptive: calls `pkill CoAwareness`, so it STOPS any running
+#             live instance. Disruptive: calls `pkill CoAwake`, so it STOPS any running
 #             instance (incl. a login-item one). Opt-in only.
 #   manual    what no hook can reach: the menu clicks (no agent can drive an NSMenu here) and how the
 #             rows LOOK. Never scripted, and never faked either — a case that cannot be observed
@@ -55,15 +55,32 @@ for arg in "$@"; do
 done
 
 mkdir -p tmp                 # tmp/ is gitignored; a fresh checkout (CI) won't have it
-BIN=./tmp/coaware-check
+mkdir -p tmp/qa-default-state
+rm -rf tmp/qa-default-state/*
+export CO_AWAKE_STATE_FILE="$PWD/tmp/qa-default-state/state.json"
+BIN=./tmp/awake-check
 GIF="$PWD/gifs/totoro.gif"
 total_fail=0
+
+host_app_support="$HOME/Library/Application Support"
+record_host_state() {
+  for d in co-awake co-awareness menubar-load-runner; do
+    if [ -d "$host_app_support/$d" ]; then
+      echo -n "$d:dir "
+      [ -f "$host_app_support/$d/state.json" ] && stat -f "%m %z" "$host_app_support/$d/state.json" || echo "no-state"
+      [ -d "$host_app_support/$d/intents" ] && (ls -1 "$host_app_support/$d/intents" 2>/dev/null | tr "\n" "," || true) || echo "no-intents"
+    else
+      echo "$d:absent"
+    fi
+  done
+}
+host_state_before=$(record_host_state)
 section(){ printf '\n=== %s ===\n' "$1"; }
 skip(){ printf '\n=== %s ===\n  SKIPPED (%s)\n' "$1" "$2"; }
 
 # --- §1 Build (warning-clean) — always: the gate AND the prerequisite for §2/§3/§4 ---------
 section "§1 build (warning-clean) [core]"
-out=$(swiftc -O -strict-concurrency=complete CoAwareness.swift -o "$BIN" 2>&1)
+out=$(swiftc -O -strict-concurrency=complete CoAwake.swift -o "$BIN" 2>&1)
 if [ -z "$out" ]; then echo "  PASS build warning-clean"; else echo "  FAIL build output:"; echo "$out"; total_fail=$((total_fail+1)); fi
 
 # --- §2 CLI parse + version [core] -----------------------------------------
@@ -108,12 +125,22 @@ rt "--foreground"           $BIN --no-detach
 rt "default"                $BIN --detach
 rt "--preset horse-white"   $BIN horse-white
 rt "--preset horse-white"   $BIN --display value horse-white
-rt "CO_AWARENESS_PRESET"    env CO_AWARENESS_PATH="$GIF" $BIN
-rt "CO_AWARENESS_DISPLAY"   env CO_AWARENESS_LABEL=value $BIN
+rt "CO_AWAKE_PRESET"     env CO_AWARENESS_PATH="$GIF" $BIN
+rt "CO_AWAKE_DISPLAY"    env CO_AWARENESS_DISPLAY=value $BIN
+rt "retired"             env CO_AWARENESS_BOGUS=1 $BIN status
+rt "retired"             env CO_AWARENESS_X=1 $BIN --help
+# launcher D2 refusals
+rc=0; err=$(env CO_AWARENESS_DISPLAY=value ./awake 2>&1) || rc=$?
+{ [ "$rc" = 1 ] && echo "$err" | grep -q "CO_AWAKE_DISPLAY"; } && { echo "  PASS [launcher refuses CO_AWAKE_DISPLAY]"; pass=$((pass+1)); } || { echo "  FAIL launcher CO_AWAKE_DISPLAY rc=$rc: $err"; fail=$((fail+1)); }
+rc=0; err=$(env CO_AWARENESS_X=1 ./awake build 2>&1) || rc=$?
+{ [ "$rc" = 1 ] && echo "$err" | grep -q "CO_AWARENESS_X"; } && { echo "  PASS [launcher build refuses CO_AWAKE_X]"; pass=$((pass+1)); } || { echo "  FAIL launcher build CO_AWAKE_X rc=$rc: $err"; fail=$((fail+1)); }
+# empty env var does not trigger refusal
+rc=0; env CO_AWARENESS_DISPLAY= $BIN status >/dev/null 2>&1 || rc=$?
+chk "empty env does not refuse" 0 $rc
 # The launcher's forward-only run with nobody resident answers with the private status 3 and boots
 # nothing — the launcher's cue to take the start path. Deterministic here: the needle is this check
 # build's own name, which no installed instance carries.
-CO_AWARENESS_FORWARD_ONLY=1 $BIN --display value >/dev/null 2>&1; chk "forward-only with nobody resident" 3 $?
+CO_AWAKE_FORWARD_ONLY=1 $BIN --display value >/dev/null 2>&1; chk "forward-only with nobody resident" 3 $?
 # The one help. Every verb and flag is in it; no preset key is — presets are data, `presets` lists
 # them, and a hand-kept list in the help is the copy that drifted.
 for f in start status snapshot presets build --preset --speed-multiplier --display --load-source --keep-awake --keep-awake-pid --battery-threshold --show-all-sources --no-update-check --foreground --extra; do
@@ -128,14 +155,14 @@ leak=$(for k in $(plutil -extract presets json -o - gifs/presets.json | grep -Eo
 # A retired spelling on the launcher reaches the binary ahead of the guard and the compile, and is
 # refused there with its replacement — never read as a start, which would forward to (or launch beside)
 # whatever instance is up. Needs the repo binary, which a fresh CI checkout does not have.
-if [ -x ./CoAwareness ]; then
-  err=$(./co-awareness --precompile 2>&1 >/dev/null); rc=$?
+if [ -x ./CoAwake ]; then
+  err=$(./awake --precompile 2>&1 >/dev/null); rc=$?
   { [ "$rc" = 1 ] && echo "$err" | grep -q build; } && { echo "  PASS launcher refuses --precompile, naming build"; pass=$((pass+1)); } || { echo "  FAIL launcher --precompile (rc=$rc: $err)"; fail=$((fail+1)); }
 else
   echo "  NOTE [no repo binary — launcher refusal of --precompile not checked]"
 fi
-out=$(./co-awareness --help 2>&1); rc=$?
-if [ -x ./CoAwareness ]; then
+out=$(./awake --help 2>&1); rc=$?
+if [ -x ./CoAwake ]; then
   { [ "$rc" = 0 ] && echo "$out" | grep -q "^Usage:"; } && { echo "  PASS launcher --help is the binary's"; pass=$((pass+1)); } || { echo "  FAIL launcher --help (rc=$rc)"; fail=$((fail+1)); }
 else
   { [ "$rc" = 2 ] && echo "$out" | grep -q "build"; } && { echo "  PASS launcher --help with no binary exits 2 naming build"; pass=$((pass+1)); } || { echo "  FAIL launcher --help with no binary (rc=$rc: $out)"; fail=$((fail+1)); }
@@ -144,9 +171,9 @@ fi
 # version must agree with it, or a release ships a stale one silently. The git
 # tag is the fifth surface and is deliberately NOT checked: qa.sh runs *before* the tag exists, so
 # asserting it would fail every pre-release run. See docs/ARCHITECTURE.md § 13.
-VER=$(grep -Eo 'static let version = "[0-9]+\.[0-9]+\.[0-9]+"' CoAwareness.swift | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')
+VER=$(grep -Eo 'static let version = "[0-9]+\.[0-9]+\.[0-9]+"' CoAwake.swift | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')
 vchk(){ grep -q "$2" "$3" && { echo "  PASS $1 shows $VER"; pass=$((pass+1)); } || { echo "  FAIL $1 missing $VER ($3)"; fail=$((fail+1)); }; }
-$BIN --help 2>&1 | grep -q "co-awareness $VER" && { echo "  PASS --help shows $VER"; pass=$((pass+1)); } || { echo "  FAIL --help missing $VER"; fail=$((fail+1)); }
+$BIN --help 2>&1 | grep -q "co-awake $VER" && { echo "  PASS --help shows $VER"; pass=$((pass+1)); } || { echo "  FAIL --help missing $VER"; fail=$((fail+1)); }
 vchk "CHANGELOG"   "## \[$VER\]"                     CHANGELOG.md
 vchk "README"      "Current version: \*\*$VER\*\*"   README.md
 vchk "cover badge" ">v$VER<"                         docs/cover.html
@@ -188,10 +215,10 @@ ok "…says why, on stderr, with stdout empty" \
 
 # An unavailable source is an ABSENT key, never a null and never a 0 — asserted through the existing
 # simulator, since every reader really works on this hardware.
-CO_AWARENESS_FORCE_UNAVAILABLE=gpu $BIN snapshot >"$J" 2>/dev/null; rc=$?
+CO_AWAKE_FORCE_UNAVAILABLE=gpu $BIN snapshot >"$J" 2>/dev/null; rc=$?
 ok "a forced-unavailable source drops its key" \
    "$([ "$rc" = 0 ] && ! grep -q '"gpu_pct"' "$J" && echo 1 || echo 0)" "got: $(cat "$J")"
-CO_AWARENESS_FORCE_BATTERY=15:battery $BIN snapshot >"$J" 2>/dev/null
+CO_AWAKE_FORCE_BATTERY=15:battery $BIN snapshot >"$J" 2>/dev/null
 ok "a forced charge reaches the snapshot" \
    "$(grep -q '"battery_pct":15.0' "$J" && echo 1 || echo 0)" "got: $(cat "$J")"
 
@@ -226,7 +253,7 @@ fi
 # must not so much as open it. (§6 runs the same flag against a real running instance.)
 ST=tmp/qa-once-state.json; printf '{"version":1}' >"$ST"; touch -t 202001010000 "$ST"
 before=$(stat -f '%m %z' "$ST")
-CO_AWARENESS_STATE_FILE="$ST" $BIN snapshot >/dev/null 2>&1
+CO_AWAKE_STATE_FILE="$ST" $BIN snapshot >/dev/null 2>&1
 ok "leaves state.json untouched" \
    "$([ "$(stat -f '%m %z' "$ST")" = "$before" ] && echo 1 || echo 0)" "was [$before] now [$(stat -f '%m %z' "$ST")]"
 
@@ -240,8 +267,8 @@ fi
 # R25's contract. Core tier for the same reason as §2a: the path builds no NSApplication. What this
 # tier can assert is the no-instance answer and the read-only promise; the live-instance half needs a
 # real process and lives in §3j. Deterministic here despite a developer's own app being up, because
-# $BIN is ./tmp/coaware-check: the probe's needle is the binary's OWN executable name, so a check build
-# answers for check builds and never for the installed CoAwareness.
+# $BIN is ./tmp/awake-check: the probe's needle is the binary's OWN executable name, so a check build
+# answers for check builds and never for the installed CoAwake.
 if [ "$RUN_NONGUI" = 1 ]; then
 section "§2b status [core]"
 pass=0; fail=0
@@ -268,7 +295,7 @@ ok "…says why, on stderr, with stdout empty" \
 ST=tmp/qa-status-state.json
 printf '{"version":1,"keepAwake":{"enabled":true,"tint":2}}' >"$ST"; touch -t 202001010000 "$ST"
 before=$(stat -f '%m %z' "$ST")
-CO_AWARENESS_STATE_FILE="$ST" $BIN status >/dev/null 2>&1
+CO_AWAKE_STATE_FILE="$ST" $BIN status >/dev/null 2>&1
 ok "leaves state.json untouched" \
    "$([ "$(stat -f '%m %z' "$ST")" = "$before" ] && echo 1 || echo 0)" "was [$before] now [$(stat -f '%m %z' "$ST")]"
 
@@ -311,9 +338,9 @@ pass=0; fail=0
 # without this each of these runs writes the developer's real state file and would clobber an armed
 # window. §3f requires this of its own runs; §3 never did.
 run(){ desc="$1"; allow="$2"; shift 2
-  err=$(CO_AWARENESS_STATE_FILE="$PWD/tmp/qa-lifecycle-state.json" \
-        CO_AWARENESS_EXIT_AFTER=0.4 "$@" 2>&1 >/dev/null); rc=$?
-  un=$(echo "$err" | grep -v 'CO_AWARENESS_EXIT_AFTER=' | { [ -n "$allow" ] && grep -v "$allow" || cat; } | grep -v '^$')
+  err=$(CO_AWAKE_STATE_FILE="$PWD/tmp/qa-lifecycle-state.json" \
+        CO_AWAKE_EXIT_AFTER=0.4 "$@" 2>&1 >/dev/null); rc=$?
+  un=$(echo "$err" | grep -v 'CO_AWAKE_EXIT_AFTER=' | { [ -n "$allow" ] && grep -v "$allow" || cat; } | grep -v '^$')
   [ "$rc" = 0 ] && [ -z "$un" ] && { echo "  PASS [$desc]"; pass=$((pass+1)); } || { echo "  FAIL [$desc] rc=$rc <<$un>>"; fail=$((fail+1)); }; }
 run "default cpu/auto"         "" $BIN
 run "load-source memory"       "" $BIN --load-source memory
@@ -334,10 +361,10 @@ run "load-source bogus"        "Unknown --load-source" $BIN --load-source bogus
 # isSourceAvailable, ahead of the per-source switch, so every source's forced case walks the same
 # code to the same fallback. Which sources this machine genuinely lacks is covered by the rows above,
 # whose `allow` pattern accepts the real fallback line.
-run "force-unavail -> cpu"     "unavailable on this machine" env CO_AWARENESS_FORCE_UNAVAILABLE=gpu $BIN --load-source gpu
+run "force-unavail -> cpu"     "unavailable on this machine" env CO_AWAKE_FORCE_UNAVAILABLE=gpu $BIN --load-source gpu
 run "fixed speed"              "" $BIN --speed-multiplier 1.5
 run "show-all-sources (flag)"  "" $BIN --show-all-sources
-run "show-all-sources (env)"   "" env CO_AWARENESS_SHOW_ALL=1 $BIN --load-source memory
+run "show-all-sources (env)"   "" env CO_AWAKE_SHOW_ALL=1 $BIN --load-source memory
 # No row for --no-update-check: §5 launches every source with --display value and reads the
 # result back off the bar, §3b launches a custom one and asserts what it persisted, and every §3f arm
 # carries --no-update-check. A clean-launch row for them would only restate those.
@@ -345,15 +372,15 @@ run "display value"             "" $BIN --display value
 run "display trace"             "" $BIN --display trace
 run "preset key"               "" $BIN --preset dog-black
 run "custom path + memory"     "" $BIN --preset "$GIF" --load-source memory
-run "env LOAD_SOURCE"          "" env CO_AWARENESS_LOAD_SOURCE=network $BIN
-run "env PRESET=<gif>"         "" env CO_AWARENESS_PRESET="$GIF" $BIN --load-source disk
+run "env LOAD_SOURCE"          "" env CO_AWAKE_LOAD_SOURCE=network $BIN
+run "env PRESET=<gif>"         "" env CO_AWAKE_PRESET="$GIF" $BIN --load-source disk
 echo "  lifecycle: passes=$pass fails=$fail"; total_fail=$((total_fail+fail))
 
 # --- §3c Label slot geometry [gui] -----------------------------------------
 # The one thing about the adjacent label that nothing else can observe: WHERE its slot sits, and whether
 # it stays put. There is no API to ask a status item its slot order, a screenshot needs Screen Recording
 # (and would have to catch a few points of drift), and menu-dump needs Accessibility — so
-# CO_AWARENESS_LOG_SLOTS=1 has the app print its own items' screen frames each tick instead,
+# CO_AWAKE_LOG_SLOTS=1 has the app print its own items' screen frames each tick instead,
 # which needs no TCC grant because a process may always inspect its own windows.
 #
 # Assertions are on RELATIVE geometry, deliberately: an unrelated menu-bar change (another app's icon
@@ -375,8 +402,8 @@ SG="$PWD/tmp/qa-slots-state.json"
 gk(){ [ "$2" = 1 ] && { echo "  PASS [$1]"; pass=$((pass+1)); } || { echo "  FAIL [$1] $3"; fail=$((fail+1)); }; }
 slots(){
   printf '{"version":1,"settings":{"displayMode":"value"}}' > "$SG"
-  CO_AWARENESS_LOG_SLOTS=1 CO_AWARENESS_STATE_FILE="$SG" \
-    CO_AWARENESS_EXIT_AFTER=7 $BIN --load-source cpu 2>&1 | grep '^SLOTS'
+  CO_AWAKE_LOG_SLOTS=1 CO_AWAKE_STATE_FILE="$SG" \
+    CO_AWAKE_EXIT_AFTER=7 $BIN --load-source cpu 2>&1 | grep '^SLOTS'
 }
 geom(){ awk '
   { n=split($0, f, /[][]/); icon=f[2];
@@ -395,29 +422,29 @@ set -- $out
 gk "slot width constant while the value changes (${3:-0} distinct readings, slot ${5:-?}pt)" \
    "$([ "${4:-1}" = 0 ] && [ "${3:-0}" -ge 2 ] && echo 1 || echo 0)" "width_changes=${4:-0} raw=$out"
 
-out_trace=$(CO_AWARENESS_LOG_SLOTS=1 CO_AWARENESS_EXIT_AFTER=5 $BIN --display trace 2>&1 | grep '^SLOTS' | geom)
+out_trace=$(CO_AWAKE_LOG_SLOTS=1 CO_AWAKE_EXIT_AFTER=5 $BIN --display trace 2>&1 | grep '^SLOTS' | geom)
 set -- $out_trace
 gk "trace slot width constant across ticks (slot ${5:-?}pt)" \
    "$([ "${4:-1}" = 0 ] && [ "${2:-0}" -ge 2 ] && echo 1 || echo 0)" "width_changes=${4:-0} raw=$out_trace"
 
 # Countdown display on the bar when windowed Keep Awake is armed
-out=$(CO_AWARENESS_LOG_SLOTS=1 CO_AWARENESS_EXIT_AFTER=3 $BIN --keep-awake 30m 2>&1 | grep '^SLOTS' | tail -1)
+out=$(CO_AWAKE_LOG_SLOTS=1 CO_AWAKE_EXIT_AFTER=3 $BIN --keep-awake 30m 2>&1 | grep '^SLOTS' | tail -1)
 lbl=$(echo "$out" | sed -n 's/.*label="\(.*\)".*/\1/p')
 gk "countdown displayed on the bar when keep-awake is windowed" \
    "$([ -n "$lbl" ] && echo "$lbl" | grep -qE '(29|30):[0-9]{2}' && echo 1 || echo 0)" "got: $lbl"
 
-out=$(CO_AWARENESS_LOG_SLOTS=1 CO_AWARENESS_STATE_FILE="$SG" CO_AWARENESS_EXIT_AFTER=3 $BIN --load-source cpu --keep-awake 30m --display value 2>&1 | grep '^SLOTS' | tail -1)
+out=$(CO_AWAKE_LOG_SLOTS=1 CO_AWAKE_STATE_FILE="$SG" CO_AWAKE_EXIT_AFTER=3 $BIN --load-source cpu --keep-awake 30m --display value 2>&1 | grep '^SLOTS' | tail -1)
 lbl=$(echo "$out" | sed -n 's/.*label="\(.*\)".*/\1/p')
 gk "countdown displayed beside telemetry when display=value" \
    "$([ -n "$lbl" ] && echo "$lbl" | grep -qE 'CPU .* (29|30):[0-9]{2}' && echo 1 || echo 0)" "got: $lbl"
 
-out=$(CO_AWARENESS_LOG_SLOTS=1 CO_AWARENESS_EXIT_AFTER=2 $BIN --keep-awake on 2>&1 | grep '^SLOTS' | tail -1)
+out=$(CO_AWAKE_LOG_SLOTS=1 CO_AWAKE_EXIT_AFTER=2 $BIN --keep-awake on 2>&1 | grep '^SLOTS' | tail -1)
 lbl=$(echo "$out" | sed -n 's/.*label="\(.*\)".*/\1/p')
 gk "indefinite keep-awake shows no countdown on the bar" \
    "$([ -n "$lbl" ] && ! echo "$lbl" | grep -qE '[0-9]{2}:[0-9]{2}' && echo 1 || echo 0)" "got: $lbl"
 
-out_collapse=$(CO_AWARENESS_LOG_SLOTS=1 CO_AWARENESS_LOG_ANIMATION=1 CO_AWARENESS_FORCE_BATTERY=15:battery \
-      CO_AWARENESS_EXIT_AFTER=5 $BIN --keep-awake 3s 2>&1)
+out_collapse=$(CO_AWAKE_LOG_SLOTS=1 CO_AWAKE_LOG_ANIMATION=1 CO_AWAKE_FORCE_BATTERY=15:battery \
+      CO_AWAKE_EXIT_AFTER=5 $BIN --keep-awake 3s 2>&1)
 lbl=$(echo "$out_collapse" | grep '^SLOTS' | tail -1 | sed -n 's/.*label="\(.*\)".*/\1/p')
 anim_w=$(echo "$out_collapse" | grep '^ANIM' | tail -1 | sed -n 's/.*animW=\([0-9.]*\).*/\1/p')
 gk "elapsed-while-suspended window collapses the countdown slot" \
@@ -430,7 +457,7 @@ echo "  slot geometry: passes=$pass fails=$fail"; total_fail=$((total_fail+fail)
 
 # --- §3a Keep Awake battery conditions [gui] -------------------------------
 # Asserts whether `caffeinate` actually runs under each power state, which is the only way to catch a
-# keep-awake that *looks* armed and holds nothing — the R1 bug. CO_AWARENESS_FORCE_BATTERY pins
+# keep-awake that *looks* armed and holds nothing — the R1 bug. CO_AWAKE_FORCE_BATTERY pins
 # the power-source read, so this needs no real battery and works on a desktop or on AC.
 #
 # Two things this deliberately does NOT test: the override (only a menu click sets it, and a menu is
@@ -443,9 +470,9 @@ section "§3a Keep Awake battery conditions [gui — needs WindowServer]"
 pass=0; fail=0
 ka(){ desc="$1"; force="$2"; expect="$3"; shift 3  # expect: run | paused; rest = extra app args
   rm -f ./tmp/qa-ka-state.json
-  CO_AWARENESS_STATE_FILE="$PWD/tmp/qa-ka-state.json" \
-  CO_AWARENESS_FORCE_BATTERY="$force" \
-  CO_AWARENESS_EXIT_AFTER=1.2 \
+  CO_AWAKE_STATE_FILE="$PWD/tmp/qa-ka-state.json" \
+  CO_AWAKE_FORCE_BATTERY="$force" \
+  CO_AWAKE_EXIT_AFTER=1.2 \
     $BIN --keep-awake 30m "$@" >/dev/null 2>&1 &
   kapid=$!
   sleep 0.5
@@ -488,14 +515,14 @@ ka "garbage -> default, releases"   15:battery paused --battery-threshold banana
 # Env var, and the empty-value-is-absent rule (an empty env must not read as a value). Assigned
 # explicitly rather than as a `VAR=x ka …` prefix: an assignment prefixed onto a shell *function*
 # leaks into the shell afterwards, which would silently apply to every case below it.
-export CO_AWARENESS_BATTERY_THRESHOLD=10
+export CO_AWAKE_BATTERY_THRESHOLD=10
 ka "env threshold 10 -> 15% holds"  15:battery run
-export CO_AWARENESS_BATTERY_THRESHOLD=
+export CO_AWAKE_BATTERY_THRESHOLD=
 ka "empty env -> default, releases" 15:battery paused
 # Flag beats env. Set to opposite sides of the charge so only one answer can be right.
-export CO_AWARENESS_BATTERY_THRESHOLD=10
+export CO_AWAKE_BATTERY_THRESHOLD=10
 ka "flag beats env"                 25:battery paused --battery-threshold 30
-unset CO_AWARENESS_BATTERY_THRESHOLD
+unset CO_AWAKE_BATTERY_THRESHOLD
 rm -f ./tmp/qa-ka-state.json
 echo "  keep-awake conditions: passes=$pass fails=$fail"; total_fail=$((total_fail+fail))
 
@@ -510,8 +537,8 @@ ST="$PWD/tmp/qa-arm-state.json"; ERR=./tmp/qa-arm-err.txt
 ck(){ if [ "$2" = EMPTY ]; then [ -z "$3" ] && r=0 || r=1; else case "$3" in *"$2"*) r=0;; *) r=1;; esac; fi
   [ $r = 0 ] && { echo "  PASS [$1]"; pass=$((pass+1)); } || { echo "  FAIL [$1] want [$2] got [${3:-<empty>}]"; fail=$((fail+1)); }; }
 # Launch, capture the caffeinate child bound to THIS app (by -w pid, never by name), wait for its exit.
-arm(){ CO_AWARENESS_STATE_FILE="$ST" CO_AWARENESS_FORCE_BATTERY="${FORCE:-100:ac}" \
-         CO_AWARENESS_EXIT_AFTER=1.2 $BIN --no-update-check "$@" >/dev/null 2>"$ERR" & app=$!
+arm(){ CO_AWAKE_STATE_FILE="$ST" CO_AWAKE_FORCE_BATTERY="${FORCE:-100:ac}" \
+         CO_AWAKE_EXIT_AFTER=1.2 $BIN --no-update-check "$@" >/dev/null 2>"$ERR" & app=$!
        sleep 0.5; CHILD=$(pgrep -fl caffeinate 2>/dev/null | grep -- "-w $app" || true); wait $app; }
 
 rm -f "$ST"; arm --keep-awake 1m;     ck "1m arms -t 60"          "-t 60"   "$CHILD"
@@ -521,8 +548,8 @@ rm -f "$ST"; arm --keep-awake on;     ck "on = no -t"             "-di -w"  "$CH
 rm -f "$ST"; arm;                     ck "absent = no child"      EMPTY     "$CHILD"
 rm -f "$ST"; arm --keep-awake banana; ck "bad value = no child"   EMPTY     "$CHILD"
                                       ck "bad value warns" "Unrecognized --keep-awake" "$(cat "$ERR")"
-rm -f "$ST"; CO_AWARENESS_KEEP_AWAKE=45m arm; ck "env arms" "-t 2700" "$CHILD"
-rm -f "$ST"; CO_AWARENESS_KEEP_AWAKE=45m arm --keep-awake 10m; ck "flag beats env" "-t 600" "$CHILD"
+rm -f "$ST"; CO_AWAKE_KEEP_AWAKE=45m arm; ck "env arms" "-t 2700" "$CHILD"
+rm -f "$ST"; CO_AWAKE_KEEP_AWAKE=45m arm --keep-awake 10m; ck "flag beats env" "-t 600" "$CHILD"
 # Round trip: the REMAINDER resumes, never a fresh 1800 (a length would extend the window every relaunch).
 rm -f "$ST"; arm --keep-awake 30m;    ck "arming writes state" '"enabled" : true' "$(cat "$ST")"
 arm; secs=$(echo "$CHILD" | sed -n 's/.*-t \([0-9]*\).*/\1/p')
@@ -538,10 +565,10 @@ printf '{"version":1,"keepAwake":{"enabled":true,"tint":1}}' > "$ST"
 arm; ck "saved indefinite not restored" EMPTY "$CHILD"   # by design: no stopping condition
 printf 'x' > "$ST"
 arm; ck "corrupt file: no child"        EMPTY "$CHILD"
-     ck "corrupt file: silent" EMPTY "$(grep -v CO_AWARENESS_EXIT_AFTER "$ERR")"
+     ck "corrupt file: silent" EMPTY "$(grep -v CO_AWAKE_EXIT_AFTER "$ERR")"
 # Natural expiry must mark the window SPENT, or it would resume forever.
 rm -f "$ST"
-CO_AWARENESS_STATE_FILE="$ST" CO_AWARENESS_EXIT_AFTER=7 $BIN --no-update-check \
+CO_AWAKE_STATE_FILE="$ST" CO_AWAKE_EXIT_AFTER=7 $BIN --no-update-check \
   --keep-awake 3s >/dev/null 2>&1 & app=$!; sleep 4
 ck "window released itself" EMPTY "$(pgrep -fl caffeinate 2>/dev/null | grep -- "-w $app" || true)"
 wait $app; ck "expiry persisted enabled:false" '"enabled" : false' "$(cat "$ST")"
@@ -577,7 +604,7 @@ rm -f "$ST"; arm --keep-awake 30m --keep-awake-pid $TPID
                                          ck "collision warns" "overrides --keep-awake" "$(cat "$ERR")"
 rm -f "$ST"; arm --keep-awake-pid $TPID --keep-awake 30m
                                          ck "pid wins either order"   "-di -w" "$CHILD"
-rm -f "$ST"; CO_AWARENESS_KEEP_AWAKE_PID=$TPID arm
+rm -f "$ST"; CO_AWAKE_KEEP_AWAKE_PID=$TPID arm
                                          ck "env binds"               "-di -w" "$CHILD"
 # A bound hold obeys the battery band like any other — the binding says when to STOP holding, never
 # that the floor doesn't apply.
@@ -596,7 +623,7 @@ kill $TPID 2>/dev/null; wait $TPID 2>/dev/null   # reap it here, or bash reports
 # the subject's exit ends the hold AND the intent.
 rm -f "$ST"
 sleep 3 >/dev/null 2>&1 & TSHORT=$!
-CO_AWARENESS_STATE_FILE="$ST" CO_AWARENESS_FORCE_BATTERY=100:ac   CO_AWARENESS_LOG_AWAKE=1 CO_AWARENESS_EXIT_AFTER=9 $BIN --no-update-check   --keep-awake-pid $TSHORT >/dev/null 2>"$ERR" & app=$!
+CO_AWAKE_STATE_FILE="$ST" CO_AWAKE_FORCE_BATTERY=100:ac   CO_AWAKE_LOG_AWAKE=1 CO_AWAKE_EXIT_AFTER=9 $BIN --no-update-check   --keep-awake-pid $TSHORT >/dev/null 2>"$ERR" & app=$!
 sleep 2.5
 ck "holds while the target runs"   "-di -w" "$(pgrep -fl caffeinate 2>/dev/null | grep -- "-w $app" || true)"
 ck "hold names its subject"        "bound_pid=$TSHORT" "$(cat "$ERR")"
@@ -608,7 +635,7 @@ ck "release persisted enabled:false" '"enabled" : false' "$(cat "$ST")"
 
 # An unwritable state location must not cost the user the feature.
 mkdir -p tmp/qa-ro && chmod 500 tmp/qa-ro
-CO_AWARENESS_STATE_FILE="$PWD/tmp/qa-ro/s.json" CO_AWARENESS_EXIT_AFTER=2.0 $BIN \
+CO_AWAKE_STATE_FILE="$PWD/tmp/qa-ro/s.json" CO_AWAKE_EXIT_AFTER=2.0 $BIN \
   --no-update-check --keep-awake 5m >/dev/null 2>&1 & app=$!; sleep 0.8
 ck "read-only state dir still arms" "-t 300" "$(pgrep -fl caffeinate 2>/dev/null | grep -- "-w $app" || true)"
 wait $app; ck "read-only state dir exits 0" 0 "$?"
@@ -624,7 +651,7 @@ section "§3b settings persistence [gui — needs WindowServer]"
 pass=0; fail=0
 SF="$PWD/tmp/qa-settings-state.json"
 sp(){ desc="$1"; expect="$2"; shift 2
-  CO_AWARENESS_STATE_FILE="$SF" CO_AWARENESS_EXIT_AFTER=0.4 "$@" >/dev/null 2>&1; rc=$?
+  CO_AWAKE_STATE_FILE="$SF" CO_AWAKE_EXIT_AFTER=0.4 "$@" >/dev/null 2>&1; rc=$?
   got=$(sed -n 's/.*"displayMode" *: *"\([a-z]*\)".*/\1/p' "$SF" 2>/dev/null)
   if [ "$rc" = 0 ] && [ "$got" = "$expect" ]; then echo "  PASS [$desc]"; pass=$((pass+1))
   else echo "  FAIL [$desc] rc=$rc expect=$expect got=${got:-<none>}"; fail=$((fail+1)); fi; }
@@ -649,17 +676,17 @@ sp "legacy labelMode value migrated"   value  $BIN
 printf '{"version":1,"settings":{"labelMode":"chart"}}' > "$SF"
 sp "legacy labelMode chart migrated"   trace  $BIN
 # Invalid env var warns and falls back to gif
-env_err=$(CO_AWARENESS_STATE_FILE="$SF" CO_AWARENESS_EXIT_AFTER=0.4 env CO_AWARENESS_DISPLAY=bogus $BIN 2>&1 >/dev/null)
+env_err=$(CO_AWAKE_STATE_FILE="$SF" CO_AWAKE_EXIT_AFTER=0.4 env CO_AWAKE_DISPLAY=bogus $BIN 2>&1 >/dev/null)
 echo "$env_err" | grep -q 'Unknown display mode' \
-  && { echo "  PASS [bad CO_AWARENESS_DISPLAY warns and falls back to gif]"; pass=$((pass+1)); } \
-  || { echo "  FAIL [bad CO_AWARENESS_DISPLAY should warn on stderr]"; fail=$((fail+1)); }
+  && { echo "  PASS [bad CO_AWAKE_DISPLAY warns and falls back to gif]"; pass=$((pass+1)); } \
+  || { echo "  FAIL [bad CO_AWAKE_DISPLAY should warn on stderr]"; fail=$((fail+1)); }
 # The battery release threshold is the second settings value, and the first whose unit differs between
 # surfaces: the CLI takes whole percents, the file stores the charge fraction. Same three-part contract
 # as the label — survives a relaunch, an explicit flag still wins, a bad value degrades — asserted on
 # the fraction the app REWRITES at termination, so a broken restore surfaces as the 0.2 default coming
 # back. §3a already proves the value drives the actual sleep policy; this proves it round-trips.
 bt(){ desc="$1"; expect="$2"; shift 2
-  CO_AWARENESS_STATE_FILE="$SF" CO_AWARENESS_EXIT_AFTER=0.4 "$@" >/dev/null 2>&1; rc=$?
+  CO_AWAKE_STATE_FILE="$SF" CO_AWAKE_EXIT_AFTER=0.4 "$@" >/dev/null 2>&1; rc=$?
   got=$(sed -n 's/.*"batteryThreshold" *: *\([0-9.]*\).*/\1/p' "$SF" 2>/dev/null)
   if [ "$rc" = 0 ] && [ "$got" = "$expect" ]; then echo "  PASS [$desc]"; pass=$((pass+1))
   else echo "  FAIL [$desc] rc=$rc expect=$expect got=${got:-<none>}"; fail=$((fail+1)); fi; }
@@ -671,7 +698,7 @@ bt "explicit flag still wins"         0.3 $BIN --battery-threshold 30
 # the 20% default — the one case where a dropped restore is a policy change, not a cosmetic one.
 bt "off persists as 0"                0   $BIN --battery-threshold off
 bt "off restored, not re-defaulted"   0   $BIN
-bt "empty env != a value"             0   env CO_AWARENESS_BATTERY_THRESHOLD= $BIN
+bt "empty env != a value"             0   env CO_AWAKE_BATTERY_THRESHOLD= $BIN
 # The state file is one more untrusted entry point, not a back door past the bounds: an out-of-range
 # value is clamped on the way in exactly as the CLI's is (999 -> 100%).
 printf '{"version":1,"settings":{"batteryThreshold":999}}' > "$SF"
@@ -690,7 +717,7 @@ echo "  settings persistence: passes=$pass fails=$fail"; total_fail=$((total_fai
 
 # --- §3d Other sleep assertions [gui] --------------------------------------
 # The read side of sleep (R13): which OTHER processes hold a sleep assertion. Asserted through
-# CO_AWARENESS_LOG_ASSERTIONS=1, which prints the FILTERED, post-hysteresis list each tick — the
+# CO_AWAKE_LOG_ASSERTIONS=1, which prints the FILTERED, post-hysteresis list each tick — the
 # LOG_SLOTS trick, and for the same reason: it needs no TCC grant, while the rows themselves are only
 # reachable via menu-dump (Accessibility) or a screenshot (Screen Recording). What the rows LOOK like
 # stays a manual check; what the app decided is asserted here.
@@ -710,8 +737,8 @@ else
   # PreventUserIdleSystemSleep ("Prevent sleep while display is on") throughout — the display is on, or
   # this tier wouldn't be running — so "no powerd line" is a live negative, not a vacuous one.
   "$PROBE" 6 & probe_pid=$!
-  out=$(CO_AWARENESS_LOG_ASSERTIONS=1 CO_AWARENESS_STATE_FILE="$AS" \
-        CO_AWARENESS_EXIT_AFTER=6 $BIN 2>&1 | grep '^ASSERTIONS')
+  out=$(CO_AWAKE_LOG_ASSERTIONS=1 CO_AWAKE_STATE_FILE="$AS" \
+        CO_AWAKE_EXIT_AFTER=6 $BIN 2>&1 | grep '^ASSERTIONS')
   wait $probe_pid 2>/dev/null
   ak "a real foreign holder is listed by owner + type" \
      "$(echo "$out" | grep -q '\[assert-probe: PreventUserIdleSystemSleep x1\]' && echo 1 || echo 0)" \
@@ -729,8 +756,8 @@ else
   # row that already reports it. The state file is removed first — a *saved* bounded window restores on
   # launch, so a stale file arms the unarmed case and both readings come out the same.
   own(){ rm -f "$AS"
-    CO_AWARENESS_LOG_ASSERTIONS=1 CO_AWARENESS_STATE_FILE="$AS" \
-      CO_AWARENESS_EXIT_AFTER=5 $BIN "$@" 2>&1 | grep '^ASSERTIONS' | tail -1; }
+    CO_AWAKE_LOG_ASSERTIONS=1 CO_AWAKE_STATE_FILE="$AS" \
+      CO_AWAKE_EXIT_AFTER=5 $BIN "$@" 2>&1 | grep '^ASSERTIONS' | tail -1; }
   out=$(own --keep-awake 30m)
   ak "an armed window's own caffeinate is excluded (own=2, -di holds two)" \
      "$(echo "$out" | grep -qE ' own=2( |$)' && echo 1 || echo 0)" "got: $out"
@@ -743,8 +770,8 @@ else
   # retention that never expires would leave a finished job listed forever. The fixture holds for 2s and
   # the run is long enough to see it clear (retention is 8s).
   "$PROBE" 2 & probe_pid=$!
-  out=$(CO_AWARENESS_LOG_ASSERTIONS=1 CO_AWARENESS_STATE_FILE="$AS" \
-        CO_AWARENESS_EXIT_AFTER=11 $BIN 2>&1 | grep '^ASSERTIONS')
+  out=$(CO_AWAKE_LOG_ASSERTIONS=1 CO_AWAKE_STATE_FILE="$AS" \
+        CO_AWAKE_EXIT_AFTER=11 $BIN 2>&1 | grep '^ASSERTIONS')
   wait $probe_pid 2>/dev/null
   seen=$(echo "$out" | grep -c 'assert-probe')
   ak "retained across a renewal gap (listed in $seen ticks after a 2s hold)" \
@@ -759,7 +786,7 @@ echo "  other sleep assertions: passes=$pass fails=$fail"; total_fail=$((total_f
 # --- §3e Machine sleep-hold state [gui] ------------------------------------
 # R16: whether the app reports that THIS MAC is held awake, by anyone — not just by its own child. The
 # whole point is the case the app used to read `Off` through: a bare `caffeinate` in a terminal. Asserted
-# through CO_AWARENESS_LOG_AWAKE=1, which prints the derived state AND the row text verbatim, so
+# through CO_AWAKE_LOG_AWAKE=1, which prints the derived state AND the row text verbatim, so
 # the rendering (attribution, "may still sleep", the clock time) is covered here and not by eyeball.
 #
 # Two things are environment-sensitive and report NOTE rather than a false FAIL, the §3c precedent: this
@@ -771,8 +798,8 @@ PROBE=./tmp/assert-probe
 AW="$PWD/tmp/qa-awake-state.json"
 mk(){ [ "$2" = 1 ] && { echo "  PASS [$1]"; pass=$((pass+1)); } || { echo "  FAIL [$1] $3"; fail=$((fail+1)); }; }
 awake(){ rm -f "$AW"
-  CO_AWARENESS_LOG_AWAKE=1 CO_AWARENESS_STATE_FILE="$AW" \
-    CO_AWARENESS_EXIT_AFTER="$1" $BIN "${@:2}" 2>&1 | grep '^AWAKE'; }
+  CO_AWAKE_LOG_AWAKE=1 CO_AWAKE_STATE_FILE="$AW" \
+    CO_AWAKE_EXIT_AFTER="$1" $BIN "${@:2}" 2>&1 | grep '^AWAKE'; }
 if ! swiftc -O tests/hold-assertion.swift -o "$PROBE" 2>&1; then
   mk "assertion fixture builds" 0 "swiftc failed"
 else
@@ -861,7 +888,7 @@ else
   # exactly like Off — and with the label off by default that 2pt line is a default user's only ambient
   # indicator. Assigned with export/unset, not as a prefix: a prefix on a shell *function* leaks into
   # every case after it (see §3a).
-  export CO_AWARENESS_FORCE_BATTERY=15:battery
+  export CO_AWAKE_FORCE_BATTERY=15:battery
   last=$(awake 5 --keep-awake 30m | tail -1)
   if echo "$last" | grep -q 'tint=foreign'; then
     echo "  NOTE [the paused tone is unverifiable here: another process holds the display, so the Mac IS"\
@@ -876,7 +903,7 @@ else
   "$PROBE" 7 --display --timeout 90 & probe_pid=$!
   last=$(awake 5 --keep-awake 30m | tail -1)
   wait $probe_pid 2>/dev/null
-  unset CO_AWARENESS_FORCE_BATTERY
+  unset CO_AWAKE_FORCE_BATTERY
   mk "a foreign display hold outranks our pause" \
      "$(echo "$last" | grep -q 'paused=1 .*tint=foreign' && echo 1 || echo 0)" "got: $last"
 fi
@@ -885,7 +912,7 @@ echo "  machine sleep-hold state: passes=$pass fails=$fail"; total_fail=$((total
 
 # --- §3g Animation driver & display modes [gui] --------------------------------
 # CADisplayLink game loop running state and display mode behavior, asserted through
-# CO_AWARENESS_LOG_ANIMATION=1. Display modes trace and value stop the driver entirely (0% CPU).
+# CO_AWAKE_LOG_ANIMATION=1. Display modes trace and value stop the driver entirely (0% CPU).
 # Note: Reduce Motion is the sole remaining animation freeze trigger; its live observer wiring
 # is an OS accessibility setting and is deliberately not forced by tests (docs/ARCHITECTURE.md §5.3).
 section "§3g animation driver & display modes [gui — needs WindowServer]"
@@ -893,11 +920,11 @@ pass=0; fail=0
 fk(){ [ "$2" = 1 ] && { echo "  PASS [$1]"; pass=$((pass+1)); } || { echo "  FAIL [$1] $3"; fail=$((fail+1)); }; }
 
 # 1. Display modes trace and value stop the animation driver entirely (0% GPU/CPU)
-anim_trace=$(CO_AWARENESS_LOG_ANIMATION=1 CO_AWARENESS_EXIT_AFTER=3 $BIN --display trace 2>&1 | grep '^ANIM')
+anim_trace=$(CO_AWAKE_LOG_ANIMATION=1 CO_AWAKE_EXIT_AFTER=3 $BIN --display trace 2>&1 | grep '^ANIM')
 fk "game loop stops in trace mode" \
    "$([ -n "$anim_trace" ] && ! echo "$anim_trace" | grep -vq 'running=0' && echo 1 || echo 0)" \
    "raw:\n$anim_trace"
-anim_val=$(CO_AWARENESS_LOG_ANIMATION=1 CO_AWARENESS_EXIT_AFTER=3 $BIN --display value 2>&1 | grep '^ANIM')
+anim_val=$(CO_AWAKE_LOG_ANIMATION=1 CO_AWAKE_EXIT_AFTER=3 $BIN --display value 2>&1 | grep '^ANIM')
 fk "game loop stops in value mode" \
    "$([ -n "$anim_val" ] && ! echo "$anim_val" | grep -vq 'running=0' && echo 1 || echo 0)" \
    "raw:\n$anim_val"
@@ -908,7 +935,7 @@ if [ "$(defaults read com.apple.universalaccess reduceMotion 2>/dev/null || echo
   echo "  NOTE [running baseline unverifiable: this machine has Reduce Motion ON, so an unfrozen run"
   echo "       correctly halts the driver by design]"
 else
-  anim=$(CO_AWARENESS_LOG_ANIMATION=1 CO_AWARENESS_EXIT_AFTER=8 $BIN 2>&1 | grep '^ANIM')
+  anim=$(CO_AWAKE_LOG_ANIMATION=1 CO_AWAKE_EXIT_AFTER=8 $BIN 2>&1 | grep '^ANIM')
   frames=$(echo "$anim" | sed -n 's/.*frame=\([0-9]*\).*/\1/p' | sort -u | wc -l | tr -d ' ')
   if echo "$anim" | grep -q 'running=0 freeze=none'; then
     echo "  NOTE [running baseline paused due to occlusion: status item occluded in current session]"
@@ -923,14 +950,14 @@ echo "  animation driver & display modes: passes=$pass fails=$fail"; total_fail=
 
 # --- §3h Battery diagnostics [gui] -----------------------------------------
 # R22: unprivileged battery health and cycle count diagnostics via AppleSmartBattery.
-# CO_AWARENESS_LOG_BATTERY_DIAGNOSTICS=1 outputs static health, cycle count,
+# CO_AWAKE_LOG_BATTERY_DIAGNOSTICS=1 outputs static health, cycle count,
 # and capacity. Gracefully reports unavailable when battery is forced unavailable.
 section "§3h battery diagnostics [gui — needs WindowServer]"
 pass=0; fail=0
 bk(){ [ "$2" = 1 ] && { echo "  PASS [$1]"; pass=$((pass+1)); } || { echo "  FAIL [$1] $3"; fail=$((fail+1)); }; }
 
 # 1. Real hardware query: if on a battery-capable machine, asserts cycles, health, and capacity shape.
-out=$(CO_AWARENESS_LOG_BATTERY_DIAGNOSTICS=1 CO_AWARENESS_EXIT_AFTER=3 $BIN 2>&1)
+out=$(CO_AWAKE_LOG_BATTERY_DIAGNOSTICS=1 CO_AWAKE_EXIT_AFTER=3 $BIN 2>&1)
 diag=$(echo "$out" | grep '^BATTERY_DIAGNOSTICS' | tail -1)
 if echo "$diag" | grep -q 'unavailable'; then
   echo "  NOTE [battery diagnostics unavailable on this machine (desktop Mac or virtual environment)]"
@@ -941,7 +968,7 @@ else
 fi
 
 # 2. Desktop simulation: FORCE_UNAVAILABLE=battery cleanly yields unavailable
-out_unavail=$(CO_AWARENESS_FORCE_UNAVAILABLE=battery CO_AWARENESS_LOG_BATTERY_DIAGNOSTICS=1 CO_AWARENESS_EXIT_AFTER=2 $BIN 2>&1)
+out_unavail=$(CO_AWAKE_FORCE_UNAVAILABLE=battery CO_AWAKE_LOG_BATTERY_DIAGNOSTICS=1 CO_AWAKE_EXIT_AFTER=2 $BIN 2>&1)
 diag_unavail=$(echo "$out_unavail" | grep '^BATTERY_DIAGNOSTICS' | tail -1)
 bk "forced unavailable battery reports unavailable" \
    "$(echo "$diag_unavail" | grep -q 'BATTERY_DIAGNOSTICS unavailable' && echo 1 || echo 0)" \
@@ -951,7 +978,7 @@ echo "  battery diagnostics: passes=$pass fails=$fail"; total_fail=$((total_fail
 
 # --- §3i Kernel thermal pressure [gui] -------------------------------------
 # R23: the temperature row says when the KERNEL has begun throttling, distinct from this app's own
-# animation self-throttling. CO_AWARENESS_FORCE_THERMAL pins the level (no way to cook a real
+# animation self-throttling. CO_AWAKE_FORCE_THERMAL pins the level (no way to cook a real
 # machine on demand); LOG_THERMAL prints the level, the derived gate, the row it produced, and the
 # self-throttle row's state — the last of which is what makes "display only" assertable.
 section "§3i kernel thermal pressure [gui — needs WindowServer]"
@@ -965,9 +992,9 @@ rm -f "$TH_ST"
 # $1 is the forced level ("" = no override, the real read); the rest are app flags. Taken as an
 # argument rather than an env prefix on the call: prefixing a FUNCTION invocation leaks the variable
 # into later calls in POSIX-mode shells, and this suite runs under bash 3.2 and zsh both.
-th(){ lvl=$1; shift; env CO_AWARENESS_FORCE_THERMAL="$lvl" CO_AWARENESS_LOG_THERMAL=1 \
-        CO_AWARENESS_STATE_FILE="$TH_ST" \
-        CO_AWARENESS_EXIT_AFTER=4 $BIN "$@" 2>&1 | grep '^THERMAL' | tail -1; }
+th(){ lvl=$1; shift; env CO_AWAKE_FORCE_THERMAL="$lvl" CO_AWAKE_LOG_THERMAL=1 \
+        CO_AWAKE_STATE_FILE="$TH_ST" \
+        CO_AWAKE_EXIT_AFTER=4 $BIN "$@" 2>&1 | grep '^THERMAL' | tail -1; }
 
 base=$(th "" --load-source temperature)
 if [ -z "$base" ] || ! echo "$base" | grep -q 'source=temperature'; then
@@ -1015,9 +1042,9 @@ fi
 
 # 6. No die sensor: the source is disabled and the launch falls back, so no orphan annotation can
 #    reach a row that isn't rendering a temperature.
-unavail=$(env CO_AWARENESS_FORCE_UNAVAILABLE=temperature CO_AWARENESS_FORCE_THERMAL=critical \
-           CO_AWARENESS_LOG_THERMAL=1 CO_AWARENESS_STATE_FILE="$TH_ST" \
-           CO_AWARENESS_EXIT_AFTER=4 $BIN --load-source temperature 2>&1 \
+unavail=$(env CO_AWAKE_FORCE_UNAVAILABLE=temperature CO_AWAKE_FORCE_THERMAL=critical \
+           CO_AWAKE_LOG_THERMAL=1 CO_AWAKE_STATE_FILE="$TH_ST" \
+           CO_AWAKE_EXIT_AFTER=4 $BIN --load-source temperature 2>&1 \
            | grep '^THERMAL' | tail -1)
 tk "forced-unavailable temperature falls back without an orphan annotation" \
    "$(echo "$unavail" | grep -q 'source=cpu' && ! echo "$unavail" | grep -q 'Thermal Throttling"' && echo 1 || echo 0)" \
@@ -1037,10 +1064,10 @@ sk(){ [ "$2" = 1 ] && { echo "  PASS $1"; pass=$((pass+1)); } || { echo "  FAIL 
 SS="$PWD/tmp/qa-status-live.json"
 
 rm -f "$SS"
-CO_AWARENESS_STATE_FILE="$SS" CO_AWARENESS_FORCE_BATTERY=100:ac \
-  CO_AWARENESS_EXIT_AFTER=6 $BIN --no-update-check --keep-awake 30m >/dev/null 2>&1 & app=$!
+CO_AWAKE_STATE_FILE="$SS" CO_AWAKE_FORCE_BATTERY=100:ac \
+  CO_AWAKE_EXIT_AFTER=6 $BIN --no-update-check --keep-awake 30m >/dev/null 2>&1 & app=$!
 sleep 2
-out=$(CO_AWARENESS_STATE_FILE="$SS" $BIN status 2>/dev/null)
+out=$(CO_AWAKE_STATE_FILE="$SS" $BIN status 2>/dev/null)
 sk "reports the running instance by pid" \
    "$(echo "$out" | grep -q "\"running\":true,\"pid\":$app," && echo 1 || echo 0)" "want pid=$app got: $out"
 rem=$(echo "$out" | sed -n 's/.*"remaining_s":\([0-9]*\).*/\1/p')
@@ -1051,16 +1078,16 @@ wait $app
 # An indefinite hold has no remaining time, so the key is ABSENT rather than 0 — the same rule the
 # snapshot uses for a reader with no reading.
 rm -f "$SS"
-CO_AWARENESS_STATE_FILE="$SS" CO_AWARENESS_FORCE_BATTERY=100:ac \
-  CO_AWARENESS_EXIT_AFTER=6 $BIN --no-update-check --keep-awake on >/dev/null 2>&1 & app=$!
+CO_AWAKE_STATE_FILE="$SS" CO_AWAKE_FORCE_BATTERY=100:ac \
+  CO_AWAKE_EXIT_AFTER=6 $BIN --no-update-check --keep-awake on >/dev/null 2>&1 & app=$!
 sleep 2
-out=$(CO_AWARENESS_STATE_FILE="$SS" $BIN status 2>/dev/null)
+out=$(CO_AWAKE_STATE_FILE="$SS" $BIN status 2>/dev/null)
 sk "an indefinite hold reports active with no remaining_s" \
    "$(echo "$out" | grep -q '"active":true' && ! echo "$out" | grep -q 'remaining_s' && echo 1 || echo 0)" "got: $out"
 wait $app
 
 # The instance is gone; its saved intent is not. Reporting a hold now would be a claim about nothing.
-out=$(CO_AWARENESS_STATE_FILE="$SS" $BIN status 2>/dev/null)
+out=$(CO_AWAKE_STATE_FILE="$SS" $BIN status 2>/dev/null)
 sk "a departed instance reports running:false, not its stale intent" \
    "$([ "$out" = '{"running":false}' ] && echo 1 || echo 0)" "state=[$(cat "$SS" 2>/dev/null | tr -d ' \n')] got: $out"
 
@@ -1075,10 +1102,10 @@ echo "  status (live): passes=$pass fails=$fail"; total_fail=$((total_fail+fail)
 section "§3k idempotent start against a live instance [gui — needs WindowServer]"
 pass=0; fail=0
 SK="$PWD/tmp/qa-start-live"; rm -rf "$SK"; mkdir -p "$SK"
-export CO_AWARENESS_STATE_FILE="$SK/state.json" CO_AWARENESS_FORCE_BATTERY=100:ac
+export CO_AWAKE_STATE_FILE="$SK/state.json" CO_AWAKE_FORCE_BATTERY=100:ac
 setting(){ plutil -extract "$1" raw -o - "$SK/state.json" 2>/dev/null; }
-count(){ pgrep -U "$(id -u)" -f "coaware-check( |$)" | wc -l | tr -d ' '; }
-CO_AWARENESS_EXIT_AFTER=12 $BIN --no-update-check --preset dog-black >/dev/null 2>&1 & app=$!
+count(){ pgrep -U "$(id -u)" -f "awake-check( |$)" | wc -l | tr -d ' '; }
+CO_AWAKE_EXIT_AFTER=12 $BIN --no-update-check --preset dog-black >/dev/null 2>&1 & app=$!
 sleep 2
 # Expected lines built first: bash 3.2 splits an escaped quote inside "$(…)" into separate words.
 forwarded="{\"action\":\"forwarded\",\"pid\":$app}"; unchanged="{\"action\":\"unchanged\",\"pid\":$app}"
@@ -1108,23 +1135,23 @@ wait $app
 # A forward that lands while the instance is still booting — before it can listen — is kept for it,
 # not lost and not fatal (SIGUSR1's default action would kill a process that has no handler yet).
 rm -rf "$SK"; mkdir -p "$SK"
-CO_AWARENESS_EXIT_AFTER=4 $BIN --no-update-check --preset dog-black >/dev/null 2>&1 & app=$!
+CO_AWAKE_EXIT_AFTER=4 $BIN --no-update-check --preset dog-black >/dev/null 2>&1 & app=$!
 sleep 0.05; $BIN --display value >/dev/null 2>&1; sleep 2
 sk "a forward into a booting instance is applied, and it survives" \
    "$(kill -0 $app 2>/dev/null && [ "$(setting settings.displayMode)" = value ] && echo 1 || echo 0)" "displayMode=$(setting settings.displayMode)"
 wait $app
-unset CO_AWARENESS_STATE_FILE CO_AWARENESS_FORCE_BATTERY
+unset CO_AWAKE_STATE_FILE CO_AWAKE_FORCE_BATTERY
 rm -rf "$SK"
 echo "  start (live): passes=$pass fails=$fail"; total_fail=$((total_fail+fail))
 
 # --- §4 Error paths [gui] --------------------------------------------------
 section "§4 error paths (fast, no modal) [gui — needs WindowServer]"
-err=$(CO_AWARENESS_STATE_FILE="$PWD/tmp/qa-lifecycle-state.json" \
-      CO_AWARENESS_EXIT_AFTER=1 $BIN --preset /no/such/file.gif 2>&1 >/dev/null); rc=$?
+err=$(CO_AWAKE_STATE_FILE="$PWD/tmp/qa-lifecycle-state.json" \
+      CO_AWAKE_EXIT_AFTER=1 $BIN --preset /no/such/file.gif 2>&1 >/dev/null); rc=$?
 { [ "$rc" = 0 ] && echo "$err" | grep -q "GIF file not found"; } && echo "  PASS bad GIF" || { echo "  FAIL bad GIF (rc=$rc)"; total_fail=$((total_fail+1)); }
 mv gifs/presets.json gifs/presets.json.bak
-err=$(CO_AWARENESS_STATE_FILE="$PWD/tmp/qa-lifecycle-state.json" \
-      CO_AWARENESS_EXIT_AFTER=1 $BIN 2>&1 >/dev/null); rc=$?
+err=$(CO_AWAKE_STATE_FILE="$PWD/tmp/qa-lifecycle-state.json" \
+      CO_AWAKE_EXIT_AFTER=1 $BIN 2>&1 >/dev/null); rc=$?
 mv gifs/presets.json.bak gifs/presets.json
 { [ "$rc" = 0 ] && echo "$err" | grep -q "Could not load preset manifest"; } && echo "  PASS missing manifest" || { echo "  FAIL missing manifest (rc=$rc)"; total_fail=$((total_fail+1)); }
 [ -f gifs/presets.json ] && echo "  PASS manifest restored" || { echo "  FAIL manifest NOT restored"; total_fail=$((total_fail+1)); }
@@ -1154,8 +1181,8 @@ rk(){ [ "$2" = 1 ] && { echo "  PASS [$1]"; pass=$((pass+1)); } || { echo "  FAI
 # placeholder; what must never appear is a different source's shape or an out-of-range number.
 for spec in "cpu:CPU:%" "memory:MEM:%" "gpu:GPU:%" "network:NET:rate" "disk:DSK:rate" "fan:FAN:%" "battery:BAT:%" "temperature:TMP:deg" "ane:ANE:watt" "bandwidth:BW:gbps"; do
   src=${spec%%:*}; rest=${spec#*:}; tag=${rest%%:*}; shape=${rest##*:}
-  out=$(CO_AWARENESS_LOG_SLOTS=1 CO_AWARENESS_STATE_FILE="$RO" \
-        CO_AWARENESS_EXIT_AFTER=4.5 $BIN --display value --load-source "$src" 2>&1 | grep '^SLOTS')
+  out=$(CO_AWAKE_LOG_SLOTS=1 CO_AWAKE_STATE_FILE="$RO" \
+        CO_AWAKE_EXIT_AFTER=4.5 $BIN --display value --load-source "$src" 2>&1 | grep '^SLOTS')
   rm -f "$RO"
   # A source this machine lacks falls back to CPU and says so on stderr — not a failure (§3 covers it).
   if [ -z "$out" ] || ! echo "$out" | grep -q "label=\"$tag"; then
@@ -1195,42 +1222,42 @@ if [ "$RUN_LAUNCHER" = 1 ]; then
   # Every pgrep/pkill here is `-U "$(id -u)"`-scoped to match the launcher's guard: the poll has to
   # observe the same process set the guard does, and a QA run must never signal another account's
   # instance on a machine with fast user switching.
-  pkill -U "$(id -u)" -f 'CoAwareness' 2>/dev/null; sleep 1
-  CO_AWARENESS_EXIT_AFTER=3 ./co-awareness --foreground --load-source memory 2>&1 | tail -1
+  pkill -U "$(id -u)" -f 'CoAwake' 2>/dev/null; sleep 1
+  CO_AWAKE_EXIT_AFTER=3 ./awake --foreground --load-source memory 2>&1 | tail -1
 
   # `build` is the in-app updater's build step: it must produce the binary and start NOTHING.
   # (The whole point is that it runs before the app quits, so the restart doesn't pay for the compile.)
-  touch CoAwareness.swift
-  ./co-awareness build
-  { [ CoAwareness -nt CoAwareness.swift ] \
-    && ! pgrep -U "$(id -u)" -f "/CoAwareness( |$)" >/dev/null; } \
+  touch CoAwake.swift
+  ./awake build
+  { [ CoAwake -nt CoAwake.swift ] \
+    && ! pgrep -U "$(id -u)" -f "/CoAwake( |$)" >/dev/null; } \
     && echo "  PASS build builds and launches nothing" \
     || { echo "  FAIL build (binary stale, or it started an instance)"; total_fail=$((total_fail+1)); }
 
   # Launch the "victim" instance with a generous self-exit window (a long QA run leaves the machine
   # busy, and the rebuild below adds a compile, so a short EXIT_AFTER could fire before the checks
   # complete), then poll up to ~10s for it to finish AppKit init and register. pkill cleans up after.
-  CO_AWARENESS_EXIT_AFTER=90 ./co-awareness --load-source memory >/dev/null 2>&1
-  for _ in $(seq 10); do pgrep -U "$(id -u)" -f "/CoAwareness( |$)" >/dev/null && break; sleep 1; done
-  victim=$(pgrep -U "$(id -u)" -f "/CoAwareness( |$)" | head -1)
+  CO_AWAKE_EXIT_AFTER=90 ./awake --load-source memory >/dev/null 2>&1
+  for _ in $(seq 10); do pgrep -U "$(id -u)" -f "/CoAwake( |$)" >/dev/null && break; sleep 1; done
+  victim=$(pgrep -U "$(id -u)" -f "/CoAwake( |$)" | head -1)
 
   # The guard runs BEFORE the compile, so a second `start` costs a pgrep and leaves the binary
   # alone — it forwards to the victim instead of launching. Asserted on the binary's mtime with the
   # source deliberately stale: a guard that ran second would rebuild here, which is how a second
   # swiftc used to be able to race the one already in flight.
-  touch CoAwareness.swift
-  before=$(stat -f %m CoAwareness)
+  touch CoAwake.swift
+  before=$(stat -f %m CoAwake)
   # Capture into a var, then match without a pipe: under `set -o pipefail`, `… | grep -q` makes the
   # launcher take SIGPIPE (141) when grep closes the pipe after matching its first line.
-  out=$(./co-awareness --load-source cpu 2>&1)
+  out=$(./awake --load-source cpu 2>&1)
   case "$out" in
     *"\"action\":\"forwarded\",\"pid\":$victim}"*) echo "  PASS second start forwards to the running instance" ;;
     *) echo "  FAIL second start (want forwarded to $victim, got: $out)"; total_fail=$((total_fail+1)) ;;
   esac
-  [ "$(stat -f %m CoAwareness)" = "$before" ] \
+  [ "$(stat -f %m CoAwake)" = "$before" ] \
     && echo "  PASS forwarding start did not compile" \
     || { echo "  FAIL forwarding start rebuilt the binary (guard runs after the compile)"; total_fail=$((total_fail+1)); }
-  out=$(./co-awareness --foreground 2>&1); rc=$?
+  out=$(./awake --foreground 2>&1); rc=$?
   [ "$rc" = 1 ] \
     && echo "  PASS --foreground refused while an instance runs" \
     || { echo "  FAIL --foreground beside a live instance (rc=$rc, got: $out)"; total_fail=$((total_fail+1)); }
@@ -1239,21 +1266,21 @@ if [ "$RUN_LAUNCHER" = 1 ]; then
   # compile, so it answers beside the live victim and leaves the stale binary alone (a compile here
   # would put a swiftc race back in front of the guard). The source is still stale from the check
   # above, which is what makes the second half assertable.
-  before=$(stat -f %m CoAwareness)
-  snap=$(./co-awareness snapshot 2>&1); rc=$?
+  before=$(stat -f %m CoAwake)
+  snap=$(./awake snapshot 2>&1); rc=$?
   { [ "$rc" = 0 ] && [ "$(printf '%s' "$snap" | grep -c '"v":1')" = 1 ]; } \
     && echo "  PASS snapshot answers beside a live instance" \
     || { echo "  FAIL snapshot beside a live instance (rc=$rc, got: $snap)"; total_fail=$((total_fail+1)); }
-  [ "$(stat -f %m CoAwareness)" = "$before" ] \
+  [ "$(stat -f %m CoAwake)" = "$before" ] \
     && echo "  PASS snapshot compiled nothing" \
     || { echo "  FAIL snapshot rebuilt the binary (dispatch runs after the compile)"; total_fail=$((total_fail+1)); }
 
   # No binary yet: a snapshot cannot compile one for itself (see above), so it says so and exits 2
   # rather than silently starting a 30s build or a menu bar. Moved aside, never deleted — the victim
   # is running out of this very inode.
-  mv CoAwareness tmp/qa-once-binary-aside
-  out=$(./co-awareness snapshot 2>&1); rc=$?
-  mv tmp/qa-once-binary-aside CoAwareness
+  mv CoAwake tmp/qa-once-binary-aside
+  out=$(./awake snapshot 2>&1); rc=$?
+  mv tmp/qa-once-binary-aside CoAwake
   case "$rc:$out" in
     2:*build*) echo "  PASS snapshot with no binary exits 2 and names build" ;;
     *) echo "  FAIL snapshot with no binary (rc=$rc, got: $out)"; total_fail=$((total_fail+1)) ;;
@@ -1262,12 +1289,12 @@ if [ "$RUN_LAUNCHER" = 1 ]; then
   # …and the rebuild that the updater performs while an instance is live must not disturb it. The
   # build is renamed into place rather than written over the binary, so the running process keeps its
   # own inode; an in-place overwrite is what kills the victim here. (Also leaves the tree built.)
-  ./co-awareness build
+  ./awake build
   { [ -n "$victim" ] && kill -0 "$victim" 2>/dev/null; } \
     && echo "  PASS live instance survives a rebuild (pid $victim)" \
     || { echo "  FAIL live instance died during build (pid ${victim:-none})"; total_fail=$((total_fail+1)); }
 
-  pkill -U "$(id -u)" -f 'CoAwareness' 2>/dev/null
+  pkill -U "$(id -u)" -f 'CoAwake' 2>/dev/null
 else
   skip "§6 launcher wrapper [launcher]" "disruptive — re-run with: tests/qa.sh --launcher"
 fi
@@ -1275,5 +1302,15 @@ fi
 # --- Cleanup + verdict -----------------------------------------------------
 rm -f "$BIN" ./tmp/qa-lifecycle-state.json ./tmp/qa-ka-state.json ./tmp/qa-settings-state.json
 printf '\n'
+host_state_after=$(record_host_state)
+if [ "$host_state_before" != "$host_state_after" ]; then
+  echo "  FAIL Q2 host-state sentinel: QA touched the real host state directory!"
+  echo "    before: $host_state_before"
+  echo "    after:  $host_state_after"
+  total_fail=$((total_fail+1))
+else
+  echo "  PASS Q2 host-state sentinel: host state directory untouched"
+fi
+
 if [ "$total_fail" = 0 ]; then echo "QA: ALL PASS"; exit 0
 else echo "QA: $total_fail FAILING section(s)"; exit 1; fi

@@ -10,7 +10,7 @@ subset** of the repo — just the cover page and the GIFs it references, served 
 root. Deployed to **Cloudflare Pages** as `<project>.pages.dev` via `wrangler` **direct upload** (we
 hand Cloudflare a built folder — no repo access, no build step of its own).
 
-Live URL: `https://co-awareness.pages.dev`. Scripts live in `scripts/` next to this file.
+Live URL: `https://co-awake.pages.dev`. Scripts live in `scripts/` next to this file.
 
 ## What I can and can't do
 
@@ -60,7 +60,7 @@ with an API Token. Unset the CLOUDFLARE_API_TOKEN..."). Confirm the right creds 
 
 ```bash
 env -u CLOUDFLARE_API_TOKEN npx wrangler whoami    # expect: "logged in with an OAuth Token" + an account row
-env -u CLOUDFLARE_API_TOKEN npx wrangler pages deploy tmp/cover-dist --project-name=co-awareness --commit-dirty=true
+env -u CLOUDFLARE_API_TOKEN npx wrangler pages deploy tmp/cover-dist --project-name=co-awake --commit-dirty=true
 ```
 
 ### When auth is expired or missing: open login page immediately
@@ -75,28 +75,28 @@ If `whoami` reports that the token has expired (`Not logged in. Your auth token 
 4. **Deploy immediately**:
    Proceed directly to:
    ```bash
-   env -u CLOUDFLARE_API_TOKEN npx wrangler pages deploy tmp/cover-dist --project-name=co-awareness --commit-dirty=true
+   env -u CLOUDFLARE_API_TOKEN npx wrangler pages deploy tmp/cover-dist --project-name=co-awake --commit-dirty=true
    ```
 
-The `co-awareness` project exists; re-running the deploy line redeploys to the same URL. Recreating it
+The `co-awake` project exists; re-running the deploy line redeploys to the same URL. Recreating it
 (new name, new account) needs `--force` **once**, at create time only: wrangler 4.13x delegates `pages`
 commands to Workers by default, which fails on this bundle ("Could not detect a directory containing
 static files") and would move the site off `pages.dev`. `--force` pins the project to classic Pages;
 after that, commands against it go straight to Pages without it:
 
 ```bash
-env -u CLOUDFLARE_API_TOKEN npx wrangler pages project create co-awareness --production-branch=main --force
+env -u CLOUDFLARE_API_TOKEN npx wrangler pages project create co-awake --production-branch=main --force
 ```
 
-The pre-rename project `menubar-load-runner` is deleted; `co-awareness` is the only Pages project for
+The pre-rename project `menubar-load-runner` is deleted; `co-awake` is the only Pages project for
 this repo.
-The `pages.dev` namespace is global across all accounts — keep the distinctive `co-awareness`
+The `pages.dev` namespace is global across all accounts — keep the distinctive `co-awake`
 project name to avoid collisions.
 
 ## 3. Verify (live)
 
 ```bash
-URL=https://co-awareness.pages.dev
+URL=https://co-awake.pages.dev
 curl -sSI "$URL" | head -1                                   # expect: HTTP/2 200
 # Badge, retried: the edge can serve the PREVIOUS deploy for a few seconds after a successful
 # upload, so one fetch showing the old version is not a failed deploy (see below).
@@ -115,7 +115,7 @@ here to stop a stale page passing as current, so a false alarm the other way is 
 to stop trusting it. Settle which case you have before touching anything:
 
 ```bash
-curl -sS "https://<deployment-hash>.co-awareness.pages.dev" | grep -oE 'class="badge">v[0-9.]+'
+curl -sS "https://<deployment-hash>.co-awake.pages.dev" | grep -oE 'class="badge">v[0-9.]+'
 curl -sS -H 'Cache-Control: no-cache' "$URL?cb=$RANDOM"        | grep -oE 'class="badge">v[0-9.]+'
 ```
 
@@ -135,7 +135,7 @@ the command that answers it: it prints Environment, Branch, and the source commi
 - **Independent surfaces.** The app reads the on-disk `gifs/`, and a Claude-hosted artifact bakes GIFs
   in as base64 — both are independent of this Pages site. Updating one does not update the others.
 - **Assets:** see the `build-visuals` skill for (re)building the GIFs the cover embeds.
-- **Teardown:** `npx wrangler pages project delete co-awareness` (removes the site + URL);
+- **Teardown:** `npx wrangler pages project delete co-awake` (removes the site + URL);
   `rm -rf tmp/cover-dist`.
 - **Reuse for other repos:** same flow — build a `tmp/cover-dist/`, deploy with a distinct
   `--project-name`. Identical whether the repo is public or private (direct upload sends only the folder).

@@ -1,21 +1,30 @@
 #!/bin/bash
-# co-awareness — uninstaller. Reverses install.sh.
+# co-awake — uninstaller. Reverses install.sh.
 #
-#   ~/.local/share/co-awareness/uninstall.sh
+#   ~/.local/share/co-awake/uninstall.sh
 #
 # Removes, in order: the start-at-login LaunchAgent (if enabled), any running instance, the
 # launcher symlink on your PATH, and the cloned install directory. It only removes things it
 # recognizes as ours (a symlink pointing into the install dir; a dir that is our git checkout),
 # so it won't clobber an unrelated file of the same name.
 #
-# Env overrides (match install.sh): CO_AWARENESS_HOME (install dir), BIN_DIR (symlink dir).
+# Env overrides (match install.sh): CO_AWAKE_HOME (install dir), BIN_DIR (symlink dir).
 # Flags: --yes (don't prompt before deleting the install dir), -h/--help.
 set -euo pipefail
 
-INSTALL_DIR="${CO_AWARENESS_HOME:-$HOME/.local/share/co-awareness}"
+for entry in $(env | grep -E "^CO_AWARENESS_[^=]+=" || true); do
+  var="${entry%%=*}"
+  val="${entry#*=}"
+  if [ -n "$val" ]; then
+    printf "\033[1;31merror:\033[0m %s is retired; see --help for current CO_AWAKE_* environment variables.\n" "$var" >&2
+    exit 1
+  fi
+done
+
+INSTALL_DIR="${CO_AWAKE_HOME:-$HOME/.local/share/co-awake}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
-LAUNCHER_NAME="co-awareness"
-LABEL="ai.bera.coawareness"
+LAUNCHER_NAME="awake"
+LABEL="com.binle.coawake"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 
 ASSUME_YES="no"
@@ -27,14 +36,14 @@ die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<EOF
-co-awareness uninstaller
+co-awake uninstaller
 
 Usage: uninstall.sh [--yes]
   --yes        remove the install dir without asking
   -h, --help   show this help
 
 Removes the LaunchAgent (if any), the PATH symlink in \$BIN_DIR, and the install dir
-(\$CO_AWARENESS_HOME, default ~/.local/share/co-awareness).
+(\$CO_AWAKE_HOME, default ~/.local/share/co-awake).
 EOF
   exit 0
 }
@@ -48,7 +57,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-info "co-awareness uninstaller"
+info "co-awake uninstaller"
 
 # --- 1. Start-at-login LaunchAgent ----------------------------------------
 if [ -e "$PLIST" ]; then
@@ -66,7 +75,7 @@ fi
 # `-U "$(id -u)"` for the same reason as the launcher's singleton guard: unscoped, this
 # targets every user's instances, so it would try (and under sudo, succeed) to kill an
 # instance belonging to another logged-in account. Uninstalling is a per-user operation.
-if pkill -U "$(id -u)" -f "/CoAwareness( |$)" 2>/dev/null; then
+if pkill -U "$(id -u)" -f "/CoAwake( |$)" 2>/dev/null; then
   ok "Stopped running instance"
 fi
 

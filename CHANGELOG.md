@@ -7,7 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Public API (what semver governs)
 
-co-awareness is a CLI-launched app; the surface that MAJOR / MINOR / PATCH bumps apply to is:
+co-awake is a CLI-launched app; the surface that MAJOR / MINOR / PATCH bumps apply to is:
 
 - **Launcher CLI** — the commands `start` (the default), `status`, `snapshot`, `presets` and
   `build`; the flags `--preset`, `--display`, `--load-source`, `--keep-awake`, `--keep-awake-pid`,
@@ -18,23 +18,38 @@ co-awareness is a CLI-launched app; the surface that MAJOR / MINOR / PATCH bumps
 - **The `snapshot` schema** — its `v` contract version, and the meaning of every key it emits.
 - **The `status` schema** — the meaning of every key it emits, and which keys are absent when.
 - **The `presets` schema** — `default`, and each preset's `key` and `title`.
-- **Environment variables** — `CO_AWARENESS_PRESET`, `CO_AWARENESS_LOAD_SOURCE`,
-  `CO_AWARENESS_DISPLAY`, `CO_AWARENESS_KEEP_AWAKE`,
-  `CO_AWARENESS_KEEP_AWAKE_PID`,
-  `CO_AWARENESS_BATTERY_THRESHOLD`, `CO_AWARENESS_UPDATE_CHECK`,
-  `CO_AWARENESS_LOG_FILE`, `CO_AWARENESS_BIN_NAME`, and the debug/QA hooks
-  `CO_AWARENESS_EXIT_AFTER`, `CO_AWARENESS_FORCE_UNAVAILABLE`,
-  `CO_AWARENESS_FORCE_BATTERY`, `CO_AWARENESS_STATE_FILE`,
-  `CO_AWARENESS_LOG_SLOTS`, `CO_AWARENESS_LOG_ASSERTIONS`,
-  `CO_AWARENESS_LOG_AWAKE`, `CO_AWARENESS_LOG_ANIMATION`,
-  `CO_AWARENESS_LOG_BATTERY_DIAGNOSTICS`, `CO_AWARENESS_FORCE_THERMAL`, and
-  `CO_AWARENESS_LOG_THERMAL`.
+- **Environment variables** — `CO_AWAKE_PRESET`, `CO_AWAKE_LOAD_SOURCE`,
+  `CO_AWAKE_DISPLAY`, `CO_AWAKE_KEEP_AWAKE`,
+  `CO_AWAKE_KEEP_AWAKE_PID`,
+  `CO_AWAKE_BATTERY_THRESHOLD`, `CO_AWAKE_UPDATE_CHECK`,
+  `CO_AWAKE_LOG_FILE`, `CO_AWAKE_BIN_NAME`, and the debug/QA hooks
+  `CO_AWAKE_EXIT_AFTER`, `CO_AWAKE_FORCE_UNAVAILABLE`,
+  `CO_AWAKE_FORCE_BATTERY`, `CO_AWAKE_STATE_FILE`,
+  `CO_AWAKE_LOG_SLOTS`, `CO_AWAKE_LOG_ASSERTIONS`,
+  `CO_AWAKE_LOG_AWAKE`, `CO_AWAKE_LOG_ANIMATION`,
+  `CO_AWAKE_LOG_BATTERY_DIAGNOSTICS`, `CO_AWAKE_FORCE_THERMAL`, and
+  `CO_AWAKE_LOG_THERMAL`.
 - **Built-in preset keywords** and the `gifs/presets.json` manifest schema.
 - **Observable behavior** — the status menu structure, the default preset, and the load-adaptive
   speed contract.
 
 Internal implementation details (Swift types, `Tuning` constants, file structure) are **not** part
 of the public API and may change in any release.
+
+## [3.0.0] - 2026-10-12
+
+### Changed - Breaking
+- **Rename to `co-awake` and command `awake`**: The repository, application, and ecosystem member name is now `co-awake`. The CLI command is `awake` (replacing `co-awareness`, retiring `coa`).
+- **Environment variables**: All environment variables and QA/debug hooks use the `CO_AWAKE_*` prefix (e.g. `CO_AWAKE_PRESET`, `CO_AWAKE_DISPLAY`, `CO_AWAKE_KEEP_AWAKE`). Any non-empty `CO_AWARENESS_*` variable is refused with exit code 1 naming its replacement.
+- **LaunchAgent label**: Login item label is `com.binle.coawake` (replaces `ai.bera.coawareness`).
+- **State directory**: Migrated to `~/Library/Application Support/co-awake` with chained migration supporting legacy `co-awareness` and `menubar-load-runner`.
+
+### Upgrade Notes
+- **Do not upgrade via menu Update**: Because the launcher filename changes across the major release, updating from the v2.4.x menu will break the running instance. Instead, reinstall using:
+  ```bash
+  ~/.local/share/co-awareness/uninstall.sh --yes
+  curl -fsSL https://raw.githubusercontent.com/binlecode/co-awake/main/install.sh | bash
+  ```
 
 ## [2.4.2] - 2026-10-06
 
@@ -64,7 +79,7 @@ of the public API and may change in any release.
 
 - **One CLI grammar for agents and humans.** The first argument is a command — `start` (the
   default), `status`, `snapshot`, `presets`, `build` — and every setting is a named flag. The preset
-  moves from the first argument to `--preset <key|path>` (env `CO_AWARENESS_PRESET`).
+  moves from the first argument to `--preset <key|path>` (env `CO_AWAKE_PRESET`).
 - **`start` is idempotent.** With an instance already running, the settings (`--preset`,
   `--display`, `--load-source`, `--keep-awake`, `--keep-awake-pid`, `--battery-threshold`) are
   validated and applied to it live, and the command replies `{"action":"forwarded","pid":N}`; with
@@ -84,7 +99,7 @@ of the public API and may change in any release.
 - `set` / `--set` (use `start`, or the flags on their own), `--once` (`snapshot`), `--status`
   (`status`), `--precompile` (`build`), `--label` (`--display`), `--no-detach` (`--foreground`),
   `--detach` (the default), the positional preset (`--preset`), and the env variables
-  `CO_AWARENESS_PATH` (`CO_AWARENESS_PRESET`) and `CO_AWARENESS_LABEL` (`CO_AWARENESS_DISPLAY`).
+  `CO_AWAKE_PATH` (`CO_AWAKE_PRESET`) and `CO_AWAKE_LABEL` (`CO_AWAKE_DISPLAY`).
   Each is refused with exit 1 and a pointer to its replacement. The argv that earlier builds emit on
   their own — the updater's `--precompile`, its Restart command, and a login item's
   `--no-detach <preset>` — is still read by the launcher for now, and a login item in that form is
@@ -158,7 +173,7 @@ of the public API and may change in any release.
   switches the status bar representation directly, while selecting any GIF switches to that animated runner.
   Mutually exclusive selection checkmarks indicate the active representation.
 - **Single status bar display architecture (`--display`)**: The status bar representation is configured
-  via `--display <gif|trace|value|chart>` or `CO_AWARENESS_DISPLAY`, unifying all visual forms into one
+  via `--display <gif|trace|value|chart>` or `CO_AWAKE_DISPLAY`, unifying all visual forms into one
   slot with zero jitter.
 
 ## [2.1.0] - 2026-09-26
@@ -168,7 +183,7 @@ of the public API and may change in any release.
 - **`--label chart`: the last 60 seconds, on the menu bar.** The label slot could show a number or
   a fixed tag, but a single reading can't tell you whether a spike is just starting or already over,
   and the dropdown's sparkline only showed that after a click. A new label mode, **Trace Chart**
-  (`--label chart`, `CO_AWARENESS_LABEL=chart`, or Settings ▸ Menu Bar Label), draws the active
+  (`--label chart`, `CO_AWAKE_LABEL=chart`, or Settings ▸ Menu Bar Label), draws the active
   source's load history as a 45 pt bar sparkline in the adjacent slot. It uses the same
   green/amber/red thresholds as the dropdown (inverted for battery) and redraws on the same 2 s tick.
   The slot keeps a fixed width, so nothing beside it moves; a Keep Awake countdown sits next to the
@@ -238,7 +253,7 @@ of the public API and may change in any release.
 - **The nine readers moved behind a `TelemetryCore` the GUI owns but no longer defines.** No
   behavioral change to the app; it is what lets one set of readers serve both the status item and
   `--once` without either shaping the other.
-- **`CO_AWARENESS_FORCE_BATTERY` now pins the charge on the reader itself**, so Keep Awake's
+- **`CO_AWAKE_FORCE_BATTERY` now pins the charge on the reader itself**, so Keep Awake's
   suspension policy and the battery readout can no longer disagree about the same battery in the same
   run — and the hook now also works on a desktop Mac, where it previously went unread.
 - **The `IOReport` binding is now shared** by the Neural Engine and bus readers — one `dlopen`, one

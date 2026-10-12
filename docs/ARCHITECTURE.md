@@ -1,7 +1,7 @@
 # ARCHITECTURE — As-Built System Architecture & Technical Specifications
 
-> **Canonical as-built architecture document for co-awareness (v2.0.0).**
-> **Source ground truth:** `CoAwareness.swift`, `co-awareness` (launcher), `gifs/presets.json`.
+> **Canonical as-built architecture document for co-awake (v3.0.0).**
+> **Source ground truth:** `CoAwake.swift`, `co-awake` (launcher), `gifs/presets.json`.
 > **Scope:** Complete architectural specifications, subsystem topologies, concurrency models, telemetry algorithms, and system invariants.
 
 ---
@@ -43,13 +43,13 @@ All repository documentation lives in `docs/`. The repository root holds only `R
 
 ## 1. System Topology & Architectural Philosophy
 
-co-awareness is a single-file, unbundled native macOS menu bar application written in Swift and AppKit. It visualizes real-time hardware telemetry by driving the playback rate of an animated status-bar GIF and providing an integrated live diagnostic dashboard with built-in sleep inhibition.
+co-awake is a single-file, unbundled native macOS menu bar application written in Swift and AppKit. It visualizes real-time hardware telemetry by driving the playback rate of an animated status-bar GIF and providing an integrated live diagnostic dashboard with built-in sleep inhibition.
 
 There is **one CLI grammar for two kinds of caller, three entry paths, and one shared telemetry engine**. The first argument is always a verb, every setting is a named flag, and every command answers with one JSON line — so an agent drives the app over argv while a person uses the menu. `start` (the default verb) is the GUI: it launches the status bar visualizer, or forwards its settings to the instance already running (§ 8.4). `snapshot` is a single-shot JSON reading of the physical hardware for non-visual consumers (§ 4.7); `status` reports whether an instance is resident and its sleep hold (§ 8.3); `presets` lists `gifs/presets.json` (§ 9.1). The paths are strictly partitioned: `status` inspects process and state files without initializing telemetry readers; `snapshot` and the GUI share `TelemetryCore` and nothing else.
 
 ```
                       +---------------------------------+
-                      |          co-awareness           |
+                      |          co-awake           |
                       |         (Zsh launcher)          |
                       +---------------------------------+
                                        |
@@ -58,7 +58,7 @@ There is **one CLI grammar for two kinds of caller, three entry paths, and one s
         | (pre-guard, pre-compile)     | (pre-guard, pre-compile)     | guard -> forward, or compile -> detach
         v                              v                              v
 +-------------------------------+ +-------------------------------+ +-------------------------------+
-| Status Query Path             | | Snapshot Path                 | | CoAwarenessApp (GUI)          |
+| Status Query Path             | | Snapshot Path                 | | CoAwakeApp (GUI)          |
 |                               | |                               | |                               |
 | ProcessProbe.newestMatch      | | sample, wait, sample again    | | status items, menu, labels    |
 | StateStore.load() (read-only) | | one JSON line, exit 0         | | Keep Awake, state.json        |
@@ -94,7 +94,7 @@ There is **one CLI grammar for two kinds of caller, three entry paths, and one s
 ### Core Design Tenets & System Boundaries
 
 1. **Read-Only Telemetry & The Observer Principle:** The observer must never become the load. The application samples aggregate physical hardware capacity via $O(1)$ Mach and IOKit counters without modifying system governors or traversing per-PID task trees (§ 4.10). Rendering frame rate throttles down under thermal or battery strain (§ 5.2).
-2. **Zero-Xcode Single-File & Unbundled Binary:** The entire runtime resides in `CoAwareness.swift` (~8.3k lines) compiled via `swiftc -O -strict-concurrency=complete`. Direct Mach-O execution avoids `.app` bundle complexity, code signature sealing that blocks in-place atomic recompilation, and Apple Developer notarization overhead (§ 2).
+2. **Zero-Xcode Single-File & Unbundled Binary:** The entire runtime resides in `CoAwake.swift` (~8.3k lines) compiled via `swiftc -O -strict-concurrency=complete`. Direct Mach-O execution avoids `.app` bundle complexity, code signature sealing that blocks in-place atomic recompilation, and Apple Developer notarization overhead (§ 2).
 3. **Pure User-Space & Kernel Lifetime Binding:** Every metric is collected via unprivileged Mach, IOKit, SMC, and IOReport interfaces. Sleep prevention is strictly bound to child process lifetimes (`caffeinate -di -w <pid>`), guaranteeing automatic kernel reclamation on termination and prohibiting persistent NVRAM mutations via root `pmset` (§ 7.5).
 4. **Jitter-Free Menu Bar Geometry:** Status item widths are strictly reserved using figure-space padding (U+2007) and monospaced tabular digits, preventing variable-width telemetry readings from triggering WindowServer lateral layout reflows (§ 6.1).
 5. **Single-Process, CLI-First Architecture:** Directly invokable via standard CLI argv with side-effect-free query paths (`snapshot`, `status`, `presets`) and an idempotent `start` that changes a running instance through a file spool and a signal (§ 8.4). Background daemon sockets, IPC servers, and embedded protocol parsers (e.g. MCP) are excluded, eliminating idle memory footprint and orphan socket hazards (§ 4.7, § 8.3).
@@ -104,11 +104,11 @@ There is **one CLI grammar for two kinds of caller, three entry paths, and one s
 
 ## 2. Launcher & Compilation Lifecycle
 
-Execution is governed by the `co-awareness` zsh script: verb dispatch, the singleton guard, compilation, and detached execution. It parses no setting and keeps no help text — both belong to the binary, so neither can drift.
+Execution is governed by the `co-awake` zsh script: verb dispatch, the singleton guard, compilation, and detached execution. It parses no setting and keeps no help text — both belong to the binary, so neither can drift.
 
 ```
                             +--------------------------------+
-                            |   co-awareness <verb> [flags]  |
+                            |   co-awake <verb> [flags]  |
                             +---------------+----------------+
                                             |
         +-----------------------------------+-----------------------------+
@@ -129,7 +129,7 @@ Execution is governed by the `co-awareness` zsh script: verb dispatch, the singl
                                           +-------------------------------+             |
                                           | --foreground given? exit 1    |             |
                                           | else run binary as a child,   |             |
-                                          | CO_AWARENESS_FORWARD_ONLY=1:  |             |
+                                          | CO_AWAKE_FORWARD_ONLY=1:  |             |
                                           |  validate, spool, SIGUSR1,    |             |
                                           |  reply, exit 0 / 1 / 2        |             |
                                           | exit 3 (instance gone):       |             |
@@ -153,11 +153,11 @@ Execution is governed by the `co-awareness` zsh script: verb dispatch, the singl
 ### Compilation Mechanics
 
 - **Dispatch Ahead of Guard and Compile:** `--help`, `status`, `snapshot`, `presets`, and any word the grammar refuses go straight to the binary, ahead of toolchain checks, the singleton guard and any compile. The launcher replaces itself via `exec`, or exits 2 naming `build` when there is no binary yet. None of them writes or locks anything, so a query never pays compile latency or races a running instance, and a refused spelling is answered on the terminal instead of in a detached log.
-- **Atomic Rename:** When compiling, the launcher outputs to `CoAwareness.new` before invoking `mv` (`rename(2)`) over `CoAwareness`. This guarantees that an existing live process paging from the Mach-O binary does not crash during a rebuild.
+- **Atomic Rename:** When compiling, the launcher outputs to `CoAwake.new` before invoking `mv` (`rename(2)`) over `CoAwake`. This guarantees that an existing live process paging from the Mach-O binary does not crash during a rebuild.
 - **`build`:** Exposes the compilation branch without launching the process. Used by the in-app self-updater to build newly pulled source code while the current instance remains live, and by `install.sh` and the login-item installer.
 - **Singleton Guard Before Compile:** On the `start` path, `pgrep -U "$(id -u)"` executes strictly before `compile_if_stale`, ensuring that duplicate launch requests never attempt concurrent compilation against the same target binary. A match means `start` forwards instead of launching (§ 8.4), with no compile: the resident process runs the previous build, and the binary on disk was built from it.
 - **Strict Concurrency Safety:** Compiled with Swift 5 `-strict-concurrency=complete`. All UI and state-managing classes are annotated `@MainActor`.
-- **Interpreted Fallback & Singleton Scope:** If `swiftc` compilation fails or toolchain elements are unavailable, the launcher falls back to interpreted execution via `swift CoAwareness.swift`. This degraded emergency fallback is intentionally not singleton-guarded: the launcher's singleton check (`pgrep -U "$(id -u)" -f "/CoAwareness( |$)"`) explicitly matches the compiled binary path to avoid false positives against editors holding `CoAwareness.swift` open or background `swiftc` builds, while the interpreted fallback process executes directly under `/usr/bin/swift`.
+- **Interpreted Fallback & Singleton Scope:** If `swiftc` compilation fails or toolchain elements are unavailable, the launcher falls back to interpreted execution via `swift CoAwake.swift`. This degraded emergency fallback is intentionally not singleton-guarded: the launcher's singleton check (`pgrep -U "$(id -u)" -f "/CoAwake( |$)"`) explicitly matches the compiled binary path to avoid false positives against editors holding `CoAwake.swift` open or background `swiftc` builds, while the interpreted fallback process executes directly under `/usr/bin/swift`.
 
 ---
 
@@ -187,7 +187,7 @@ $$\text{slotLength} = \max\left(\text{menuBarHeight} \times \text{clamp}(\text{a
 On macOS 14+, the animation is driven by a `CADisplayLink` bound to the status item's button view (`NSView.displayLink(target:selector:)`). On older macOS releases, a 60 Hz fallback `Timer` (`Tuning.gameLoopFallbackInterval`) is used.
 
 ```swift
-// Abridged from CoAwareness.advanceFrames(now:) — elided: the empty-frames guard
+// Abridged from CoAwake.advanceFrames(now:) — elided: the empty-frames guard
 // and the first-tick latch (lastTickTime == 0 returns without advancing).
 let delta = now - lastTickTime
 lastTickTime = now
@@ -448,9 +448,9 @@ Battery telemetry operates across two distinct time domains to honor the unprivi
    - **Normalizations**: Automatically maps Apple Silicon normalized `MaxCapacity` percentages (0..100) and legacy Intel raw mAh capacities against `DesignCapacity`. Computes service recommendation conditions when health falls below 80% or `PermanentFailureStatus != 0`.
    - **Presentation**: Enriches the battery status row (`Battery: 80% · AC · 100% health · 113 cycles`), `stateItem` (`Battery State: Normal · 8478/8579 mAh`, replacing the drain band while the menu is open), and provides multi-line AppKit tooltips with granular mAh capacities.
    - **Graceful Desktop Omission**: On AC-only desktop Macs lacking an `AppleSmartBattery` service, the reader cleanly returns `nil`, and the menu seamlessly preserves standard desktop AC status with zero visual defects or overhead.
-   - **Observability without behavior change**: `CO_AWARENESS_LOG_BATTERY_DIAGNOSTICS=1` prints one line at launch and one per menu open. It reads a throwaway copy and never assigns the cached field, so the hook cannot make the menu render the diagnostics branch at a moment the menu was never open — the reason it is not wired into `sampleSystemLoad()` where the other `LOG_*` hooks sit.
+   - **Observability without behavior change**: `CO_AWAKE_LOG_BATTERY_DIAGNOSTICS=1` prints one line at launch and one per menu open. It reads a throwaway copy and never assigns the cached field, so the hook cannot make the menu render the diagnostics branch at a moment the menu was never open — the reason it is not wired into `sampleSystemLoad()` where the other `LOG_*` hooks sit.
 
-`CO_AWARENESS_FORCE_BATTERY=<pct>[:battery|:ac]` pins the charge and power state on `BatteryLoadMonitor` itself, not on a caller. Two places in the app read `IOPSCopyPowerSourcesInfo` — Keep Awake's suspension policy (§ 7.2) and this reader — and a hook honored by only one of them would let them disagree about the same battery in the same run. Current (mA) is left real: the hook simulates a charge and a power state, nothing else. On a desktop it also makes the reader *answer*, which is the only way a machine with no battery can exercise the path at all.
+`CO_AWAKE_FORCE_BATTERY=<pct>[:battery|:ac]` pins the charge and power state on `BatteryLoadMonitor` itself, not on a caller. Two places in the app read `IOPSCopyPowerSourcesInfo` — Keep Awake's suspension policy (§ 7.2) and this reader — and a hook honored by only one of them would let them disagree about the same battery in the same run. Current (mA) is left real: the hook simulates a charge and a power state, nothing else. On a desktop it also makes the reader *answer*, which is the only way a machine with no battery can exercise the path at all.
 
 ### 4.7 Telemetry Core & the `snapshot` Command
 
@@ -460,11 +460,11 @@ The unprivileged readers used to run inside a status item, so the only consumer 
 
 | Module / Boundary | Owns | Not its business — canonical owner |
 |---|---|---|
-| `TelemetryCore` | Every reader, its availability probe and its scaler, plus the per-source dispatch (`sampleSource(_:elapsed:)`, `isSourceAvailable(_:)`, `hasSample(_:)`, `currentLoad(_:)`) and one `snapshot()` returning physical units | Speed mapping, menu text, labels, Keep Awake, `state.json` — all `CoAwarenessApp` |
-| `CoAwarenessApp` | Everything on screen and every intent that persists; asks the core for readings | How a reading is taken — `TelemetryCore` |
-| `co-awareness` (launcher) | Singleton guard, `compile_if_stale`, detach — for **`start` only** | Telemetry; and on the `snapshot` path, compiling anything |
+| `TelemetryCore` | Every reader, its availability probe and its scaler, plus the per-source dispatch (`sampleSource(_:elapsed:)`, `isSourceAvailable(_:)`, `hasSample(_:)`, `currentLoad(_:)`) and one `snapshot()` returning physical units | Speed mapping, menu text, labels, Keep Awake, `state.json` — all `CoAwakeApp` |
+| `CoAwakeApp` | Everything on screen and every intent that persists; asks the core for readings | How a reading is taken — `TelemetryCore` |
+| `co-awake` (launcher) | Singleton guard, `compile_if_stale`, detach — for **`start` only** | Telemetry; and on the `snapshot` path, compiling anything |
 | Field projection / filtering | Caller piping to `jq` or JSON parsers | Not `snapshot` (no `--query`; rates require discrete delta window) |
-| Admission decisions | Caller's workload orchestrator applying thresholds | Not `snapshot` (no `--check`; thresholds belong to caller; keeps `CO_AWARENESS_FORCE_THERMAL` display-only) |
+| Admission decisions | Caller's workload orchestrator applying thresholds | Not `snapshot` (no `--check`; thresholds belong to caller; keeps `CO_AWAKE_FORCE_THERMAL` display-only) |
 | Tool schema export | Calling agent harness native registry | Not `snapshot` (no `--tool-spec`; avoids duplicate schema drift without consumers) |
 
 The core never imports a display concept. It returns MB/s, °C, W, RPM, %, A — never the 0..1 driver value. Normalization to 0..1 is a speed-mapping question, which is why the scalers (§ 4.4) stay *inside* the readers, where they are how a rate reader produces its own number, and why nothing in a snapshot reads one. The core also never touches `state.json`: a snapshot describes the machine, not this app's intent, and a second writer would break the single-writer model (§ 8.2).
@@ -657,7 +657,7 @@ The engine reduces its own footprint under thermal or battery strain.
 
 It also closes a gap: `throttleStatusItem` is set only in the `isAutoSpeed` branch, so on a fixed `--speed-multiplier` the menu previously carried no thermal indication at all — and its wording could not simply be un-gated, since in that mode the app is not slowing anything.
 
-**Wiring invariant.** `loadReductionReasons` and `isUnderPowerPressure` read `ProcessInfo.thermalState` directly and must never consult `KernelThermalPressure`. The type is display-only, which is what keeps its `CO_AWARENESS_FORCE_THERMAL` hook an input simulator rather than a hook that moves a business decision (§ 10). `CO_AWARENESS_LOG_THERMAL` prints the level, the derived gate, the row it produced and the self-throttle row's state together, so a headless test asserts the separation instead of trusting it.
+**Wiring invariant.** `loadReductionReasons` and `isUnderPowerPressure` read `ProcessInfo.thermalState` directly and must never consult `KernelThermalPressure`. The type is display-only, which is what keeps its `CO_AWAKE_FORCE_THERMAL` hook an input simulator rather than a hook that moves a business decision (§ 10). `CO_AWAKE_LOG_THERMAL` prints the level, the derived gate, the row it produced and the self-throttle row's state together, so a headless test asserts the separation instead of trusting it.
 
 ### 5.3 Reduce Motion
 
@@ -669,7 +669,7 @@ It also closes a gap: `throttleStatusItem` is set only in the `isAutoSpeed` bran
 
 ## 6. Status Bar Layout & Minimalist Single-Item Architecture
 
-To align with minimalist design and eliminate dual-slot scattering and lateral jitter, co-awareness uses a unified single status-item architecture.
+To align with minimalist design and eliminate dual-slot scattering and lateral jitter, co-awake uses a unified single status-item architecture.
 
 ```
                            macOS Menu Bar Item
@@ -955,7 +955,7 @@ route correctly is an eyes-and-hands check in the manual walk (§ 13), not a scr
 
 ### 8.2 State Persistence (`StateStore`)
 
-State is persisted to `~/Library/Application Support/co-awareness/state.json`:
+State is persisted to `~/Library/Application Support/co-awake/state.json`:
 
 ```json
 // `deadline` is a Swift `Date` under JSONEncoder's default strategy: seconds since the
@@ -979,7 +979,7 @@ State is persisted to `~/Library/Application Support/co-awareness/state.json`:
 - **Fail-Silent:** Corrupt, missing, or unwritable files fall back to system defaults without surfacing dialogs.
 - **Atomic Persistence:** `data.write(to:options: .atomic)` — Foundation writes a temp file and renames it into place.
 - **Single-Writer Rule:** `persistState()` is the sole disk writer, assembling memory state atomically to avoid race conditions.
-- **Rename Migration:** On GUI launch only — never on the `status` path, which must stay read-only (§ 8.3) — `StateStore` moves a pre-rename `Application Support/menubar-load-runner/` directory into `co-awareness/` when, and only when, the new directory is absent. Never merged, never repeated; failure stays fail-silent like everything else here.
+- **Rename Migration:** On GUI launch only — never on the `status` path, which must stay read-only (§ 8.3) — `StateStore` moves a pre-rename `Application Support/menubar-load-runner/` directory into `co-awake/` when, and only when, the new directory is absent. Never merged, never repeated; failure stays fail-silent like everything else here.
 
 ### 8.3 The `status` Query
 
@@ -1004,7 +1004,7 @@ State is persisted to `~/Library/Application Support/co-awareness/state.json`:
 
 ```
                      +---------------------------------------+
-                     |         $ co-awareness status         |
+                     |         $ co-awake status         |
                      +-------------------+-------------------+
                                          |
                                          v
@@ -1071,12 +1071,12 @@ State is persisted to `~/Library/Application Support/co-awareness/state.json`:
 `start` — the default verb — leaves exactly one resident instance carrying the requested settings, whether or not one was already up. With nobody resident it launches; with an instance resident it forwards the settings to that instance and exits. A caller never has to ask `status` first and choose a verb from the answer, and a person who re-runs the command they launched with changes the running app instead of meeting "already running".
 
 ```
-        $ co-awareness --display value --keep-awake 2h
+        $ co-awake --display value --keep-awake 2h
                              |
                              v
         +------------------------------------------+
         | launcher: pgrep finds an instance        |
-        | binary start, CO_AWARENESS_FORWARD_ONLY=1|
+        | binary start, CO_AWAKE_FORWARD_ONLY=1|
         +--------------------+---------------------+
                              |
                              v
@@ -1092,7 +1092,7 @@ State is persisted to `~/Library/Application Support/co-awareness/state.json`:
                              | SIGUSR1
                              v
         +------------------------------------------+
-        | resident CoAwarenessApp                  |
+        | resident CoAwakeApp                  |
         | DispatchSource -> drainRuntimeIntents    |
         | take each file (rename out), send order  |
         | apply through the menu's own setters     |
@@ -1104,7 +1104,7 @@ State is persisted to `~/Library/Application Support/co-awareness/state.json`:
 |---|---|---|
 | Launcher | Dispatch; for `start`, the singleton guard and then either the forward hand-off or `compile_if_stale` + detach; refusing `--foreground` while an instance is resident | Parsing or validating a setting — the binary owns every flag's meaning |
 | `IntentForwarder` (binary) | Picking the target, validating every setting, spooling one file, the signal, the one-line reply | Applying anything, and `state.json` — the single writer stays `persistState()` (§ 8.2) |
-| Resident `CoAwarenessApp` | Draining the spool in send order through the setters the menu uses, then `persistState()` | Syntax — the forwarder refused bad input before anything was sent |
+| Resident `CoAwakeApp` | Draining the spool in send order through the setters the menu uses, then `persistState()` | Syntax — the forwarder refused bad input before anything was sent |
 
 **Interface.**
 
@@ -1113,7 +1113,7 @@ State is persisted to `~/Library/Application Support/co-awareness/state.json`:
 | Reply | One line on stdout: `{"action":"started","pid":N,"log":"<path>"}` (launcher, detached) · `{"action":"forwarded","pid":N}` · `{"action":"unchanged","pid":N}` (resident, no settings given). No line with `--foreground` — stdout then belongs to the app |
 | Exit | `0` started, forwarded or unchanged · `1` usage error, a refused value, or a launch-only flag while resident · `2` resident but no binary to reach it with (launcher) · `3` private between launcher and binary: the forward-only run found nobody left, and the launcher launches instead |
 | Settings vs launch-only | Settings (`--preset`, `--display`, `--load-source`, `--keep-awake`, `--keep-awake-pid`, `--battery-threshold`) apply at launch or live. A launch-only flag (`--speed-multiplier`, `--show-all-sources`, `--no-update-check`, `--foreground`) while resident is exit 1 and nothing in the same call is applied — all or nothing, so `forwarded` never reports a half-done request. `--extra` skips the resident check and always launches |
-| Environment | Flag over env, on both paths. Only settings that were given are forwarded, never defaults. Launch-only env (`CO_AWARENESS_SHOW_ALL`, `CO_AWARENESS_UPDATE_CHECK`) is read at launch only |
+| Environment | Flag over env, on both paths. Only settings that were given are forwarded, never defaults. Launch-only env (`CO_AWAKE_SHOW_ALL`, `CO_AWAKE_UPDATE_CHECK`) is read at launch only |
 | `forwarded` means sent | The signal is one-way. The one check only the instance can make — whether this Mac can read the requested source — happens after the reply; a refusal there is a stderr line in the instance's log, and the current source stays |
 
 **Strict forward, forgiving launch.** Both paths use the same parsers with opposite failure policies. A launch degrades a bad value to a default (unknown source → cpu, bad window → off, bad threshold → 20%), because its argv may be baked into a login item, and a failed launch there costs the user the app with nobody watching. A forward loses nothing by refusing: the instance stays exactly as it was, and the caller — who is watching — is told at once. A GIF path is made absolute against the caller's working directory before it is sent, because the resident process has its own.
@@ -1168,7 +1168,7 @@ At launch, `JSONDecoder` hydrates `allPresets: [PresetDescriptor]`, determining 
 ### 9.2 Git-Native In-App Update Engine
 
 - **Update Probe (`UpdateChecker`):** Executes `git ls-remote --tags --refs origin 'v*'` against the origin remote, comparing the highest strict three-component SemVer against `AppInfo.version`.
-- **Precompile Before Restart (`Builder`):** On user confirmation, runs `git pull --ff-only` followed by `co-awareness build`.
+- **Precompile Before Restart (`Builder`):** On user confirmation, runs `git pull --ff-only` followed by `co-awake build`.
 - **Supervisor-Preserving Relaunch (`Restarter`):** Dispatches a detached `/bin/sh` script waiting for the old process PID to terminate, then relaunches via either `launchctl kickstart` (for LaunchAgent jobs) or the original launcher command line.
 - **Update Frequency Boundary:** Update checks execute strictly on launch (`UpdateChecker`) and on user demand via the menu. Background periodic polling timers are excluded to avoid unnecessary network activity and timer lifecycle debt.
 
@@ -1250,9 +1250,9 @@ The first argument is a verb; omitted, or a flag, means `start`. Settings apply 
 | `--extra` | off | Flag | Skips the resident check: always launches another instance | launcher & binary |
 | `-h` / `--help` | — | Flag, any position | The one help text, generated by the binary; lists no preset | binary (launcher execs it) |
 
-*No-arguments invariant:* `status`, `snapshot` and `presets` take nothing; any companion argument is exit 1 with stdout left empty. Retired spellings (`set`, `--once`, `--status`, `--precompile`, `--label`, `--no-detach`, `--detach`, a bare preset word, `CO_AWARENESS_PATH`, `CO_AWARENESS_LABEL`) are exit 1 with the replacement named.
+*No-arguments invariant:* `status`, `snapshot` and `presets` take nothing; any companion argument is exit 1 with stdout left empty. Retired spellings (`set`, `--once`, `--status`, `--precompile`, `--label`, `--no-detach`, `--detach`, a bare preset word, `CO_AWAKE_PATH`, `CO_AWAKE_LABEL`) are exit 1 with the replacement named.
 
-*Retiring a spelling:* a login item's argv lives in two places, the plist on disk and the copy launchd loaded at `bootstrap`. `kickstart` (the self-update relaunch, § 9.2) replays the loaded copy, never the file, so a plist rewritten without a reload changes nothing until logout. A release that starts refusing a spelling therefore has one precondition: on every known install, `launchctl print gui/<uid>/ai.bera.coawareness` shows argv the new grammar accepts. The file and the running process prove nothing, because a hand-started instance can run new-form argv while launchd still holds the old. Login items move to a new grammar only through `scripts/install-login-item.sh`, which always pairs the write with `bootout` + `bootstrap`. The release before the refusal keeps reading the old form, because the new binary has to start from whatever launchd replays.
+*Retiring a spelling:* a login item's argv lives in two places, the plist on disk and the copy launchd loaded at `bootstrap`. `kickstart` (the self-update relaunch, § 9.2) replays the loaded copy, never the file, so a plist rewritten without a reload changes nothing until logout. A release that starts refusing a spelling therefore has one precondition: on every known install, `launchctl print gui/<uid>/com.binle.coawake` shows argv the new grammar accepts. The file and the running process prove nothing, because a hand-started instance can run new-form argv while launchd still holds the old. Login items move to a new grammar only through `scripts/install-login-item.sh`, which always pairs the write with `bootout` + `bootstrap`. The release before the refusal keeps reading the old form, because the new binary has to start from whatever launchd replays.
 
 *Declined: rewriting the login item on every self-update.* It cannot replace that bridge. The process running the update predates the new grammar, so it can only bake in its own spellings, and the new binary still has to parse the old argv to come up at all. It would also turn the login item's argv, which is chosen once at Start at Login, into whatever the menu last held, and the update would have to `bootout` its own job, so a detached helper would have to finish the restart. Reopen if a grammar change has to reach installs that cannot run the installer, or if the login item stops baking settings into argv.
 
@@ -1260,27 +1260,27 @@ The first argument is a verb; omitted, or a flag, means `start`. Settings apply 
 
 | Variable Name | Type / Values | Default | Subsystem & Behavioral Role |
 |---|---|---|---|
-| `CO_AWARENESS_PRESET` | Preset key or GIF path | unset | Same as `--preset`; the flag wins |
-| `CO_AWARENESS_LOAD_SOURCE` | Source enum | `cpu` | Sets active telemetry monitor driving animation |
-| `CO_AWARENESS_DISPLAY` | Mode | `gif` | Sets default status bar display mode |
-| `CO_AWARENESS_KEEP_AWAKE` | Duration string | `off` | Sets startup Keep Awake hold duration |
-| `CO_AWARENESS_KEEP_AWAKE_PID` | Integer PID | unset | Sets process-bound Keep Awake hold |
-| `CO_AWARENESS_BATTERY_THRESHOLD`| Percentage string | `20` | Sets battery release threshold |
-| `CO_AWARENESS_UPDATE_CHECK` | `0` or `1` | `1` | Toggles launch-time update check |
-| `CO_AWARENESS_LOG_FILE` | Path string | `/tmp/co-awareness.log` | Detached execution output log path |
-| `CO_AWARENESS_BIN_NAME` | String | `CoAwareness` | Binary name override for process matching |
-| `CO_AWARENESS_FORWARD_ONLY` | `1` | unset | Launcher → binary protocol, not a user setting: forward only, and exit 3 when nobody is resident (§ 8.4) |
-| `CO_AWARENESS_EXIT_AFTER` | Seconds (float) | unset | Test hook: cleanly terminates app (exit 0) after duration |
-| `CO_AWARENESS_FORCE_UNAVAILABLE` | Comma-separated sources | unset | Test hook: forces named telemetry sources unavailable |
-| `CO_AWARENESS_FORCE_BATTERY` | `pct[:battery\|:ac]` | unset | Test hook: simulates battery charge level and power source (§ 4.6) |
-| `CO_AWARENESS_FORCE_THERMAL` | `nominal\|fair\|serious\|critical` | unset | Test hook: simulates kernel thermal pressure level (display-only, § 5.2) |
-| `CO_AWARENESS_STATE_FILE` | Path string | `~/Library/.../state.json` | Test hook: overrides state persistence file location |
-| `CO_AWARENESS_LOG_SLOTS` | `1` | unset | Observability: logs status item screen coordinates and widths |
-| `CO_AWARENESS_LOG_ASSERTIONS` | `1` | unset | Observability: logs external power assertion telemetry |
-| `CO_AWARENESS_LOG_AWAKE` | `1` | unset | Observability: logs sleep inhibition decider states |
-| `CO_AWARENESS_LOG_ANIMATION` | `1` | unset | Observability: logs animation loop tick deltas and freeze state |
-| `CO_AWARENESS_LOG_BATTERY_DIAGNOSTICS` | `1` | unset | Observability: logs static battery health diagnostics on menu open |
-| `CO_AWARENESS_LOG_THERMAL` | `1` | unset | Observability: logs thermal pressure level and display annotation |
+| `CO_AWAKE_PRESET` | Preset key or GIF path | unset | Same as `--preset`; the flag wins |
+| `CO_AWAKE_LOAD_SOURCE` | Source enum | `cpu` | Sets active telemetry monitor driving animation |
+| `CO_AWAKE_DISPLAY` | Mode | `gif` | Sets default status bar display mode |
+| `CO_AWAKE_KEEP_AWAKE` | Duration string | `off` | Sets startup Keep Awake hold duration |
+| `CO_AWAKE_KEEP_AWAKE_PID` | Integer PID | unset | Sets process-bound Keep Awake hold |
+| `CO_AWAKE_BATTERY_THRESHOLD`| Percentage string | `20` | Sets battery release threshold |
+| `CO_AWAKE_UPDATE_CHECK` | `0` or `1` | `1` | Toggles launch-time update check |
+| `CO_AWAKE_LOG_FILE` | Path string | `/tmp/co-awake.log` | Detached execution output log path |
+| `CO_AWAKE_BIN_NAME` | String | `CoAwake` | Binary name override for process matching |
+| `CO_AWAKE_FORWARD_ONLY` | `1` | unset | Launcher → binary protocol, not a user setting: forward only, and exit 3 when nobody is resident (§ 8.4) |
+| `CO_AWAKE_EXIT_AFTER` | Seconds (float) | unset | Test hook: cleanly terminates app (exit 0) after duration |
+| `CO_AWAKE_FORCE_UNAVAILABLE` | Comma-separated sources | unset | Test hook: forces named telemetry sources unavailable |
+| `CO_AWAKE_FORCE_BATTERY` | `pct[:battery\|:ac]` | unset | Test hook: simulates battery charge level and power source (§ 4.6) |
+| `CO_AWAKE_FORCE_THERMAL` | `nominal\|fair\|serious\|critical` | unset | Test hook: simulates kernel thermal pressure level (display-only, § 5.2) |
+| `CO_AWAKE_STATE_FILE` | Path string | `~/Library/.../state.json` | Test hook: overrides state persistence file location |
+| `CO_AWAKE_LOG_SLOTS` | `1` | unset | Observability: logs status item screen coordinates and widths |
+| `CO_AWAKE_LOG_ASSERTIONS` | `1` | unset | Observability: logs external power assertion telemetry |
+| `CO_AWAKE_LOG_AWAKE` | `1` | unset | Observability: logs sleep inhibition decider states |
+| `CO_AWAKE_LOG_ANIMATION` | `1` | unset | Observability: logs animation loop tick deltas and freeze state |
+| `CO_AWAKE_LOG_BATTERY_DIAGNOSTICS` | `1` | unset | Observability: logs static battery health diagnostics on menu open |
+| `CO_AWAKE_LOG_THERMAL` | `1` | unset | Observability: logs thermal pressure level and display annotation |
 
 ---
 
@@ -1305,7 +1305,7 @@ self-restraint — it only ever reads the system, and the only thing it throttle
 | **v1.23** — a hold that isn't a guess | Keep Awake bound to a process instead of a clock; the timed window counting down on the menu bar itself | A hold can take its end condition from the job rather than from a guessed duration (§ 7.4); the countdown became a glance, under the same occlusion gate the animation obeys (§ 6.3) |
 | **v1.24** — the gesture, and the battery's own history | Option-click on any slot toggles Keep Awake without the menu; the dropdown reports battery health, cycle count and capacity | The first action reachable without opening anything — routed *through* the submenu's own arm/disarm so the 5% floor and the override rule cannot drift from it (§ 6.4, § 7.6); the first reading the app does not poll at all, gated entirely on menu open (§ 4.6) |
 | **v1.25.0** — the kernel's throttle vs our throttle | Temperature row annotates `· Thermal Throttling` on `.serious`/`.critical` pressure | Clear separation between what the kernel does to the machine (display-only) and what this app does about it (self-throttling), enforced in wiring and display (§ 5.2) |
-| **v2.0.0** — headless contracts, silicon splits & the rename | `--once` JSON snapshot and `TelemetryCore`; DRAM bus bandwidth via `BandwidthLoadMonitor` + CPU P/E cluster & GPU pipeline splits; `--status` app query; renamed to `co-awareness` — launcher, env prefix, state path | Telemetry core decoupled from GUI display concepts (§ 4.7); physical rate observation on memory controller bus histograms (§ 4.8); headless non-invasive process and hold inspection (§ 8.3); one name, one env prefix, one state path — no alias, no dual-prefix fallback (§ 8.2) |
+| **v3.0.0** — headless contracts, silicon splits & the rename | `--once` JSON snapshot and `TelemetryCore`; DRAM bus bandwidth via `BandwidthLoadMonitor` + CPU P/E cluster & GPU pipeline splits; `--status` app query; renamed to `co-awake` — launcher, env prefix, state path | Telemetry core decoupled from GUI display concepts (§ 4.7); physical rate observation on memory controller bus histograms (§ 4.8); headless non-invasive process and hold inspection (§ 8.3); one name, one env prefix, one state path — no alias, no dual-prefix fallback (§ 8.2) |
 | **v2.1.0** — menu bar trace sparkline | `--label chart` / trace display mode | 12-bar mineral sparkline directly on the status bar slot (§ 6) |
 | **v2.2.0** — unified single slot display | `--display <gif\|trace\|value>` | Unified single status item geometry eliminating dual-slot jitter (§ 6) |
 | **v2.3.0** — canonical CLI substrate & ergonomic menu | Runtime intent forwarding (`set`) via POSIX signal + atomic `intent.json`; enriched `--once` snapshot with `power_source`, `memory_pressure`, topology and battery diagnostics; clean 4-tier menu architecture decoupling display modes from character presets and nesting battery safety floor | CLI leads as canonical substrate, GUI projects as ergonomic view; external agents control resident GUI instance without singleton deadlock (§ 8.4); telemetry snapshot parity with menu facts (§ 4.7); eliminated dashboard radio-button misclicks and internal debug leaks (§ 6) |

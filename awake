@@ -1,12 +1,12 @@
 #!/usr/bin/env zsh
 set -euo pipefail
 
-readonly APP_CMD_NAME="co-awareness"
+readonly APP_CMD_NAME="awake"
 
 # Absolute, symlink-resolved path of THIS script. The app re-execs it for the update prompt's
-# Restart button (exported as CO_AWARENESS_LAUNCHER below), and it is also where the
+# Restart button (exported as CO_AWAKE_LAUNCHER below), and it is also where the
 # script dir comes from — one resolution, so the two can't disagree. Resolving through the
-# symlink matters: the PATH entry install.sh creates is ~/.local/bin/co-awareness
+# symlink matters: the PATH entry install.sh creates is ~/.local/bin/awake
 # pointing into the install dir, and a restart has to run the real file, not the link's name
 # joined to the real dir.
 resolve_script_path() {
@@ -41,10 +41,10 @@ exec_binary() {
     print -u2 "$APP_CMD_NAME: no binary yet; build one with \`$APP_CMD_NAME build\`."
     exit 2
   fi
-  CO_AWARENESS_BIN_NAME="$APP_CMD_NAME" exec "$swift_bin" "$@"
+  CO_AWAKE_BIN_NAME="$APP_CMD_NAME" exec "$swift_bin" "$@"
 }
 
-# Compiles CoAwareness.swift to the sibling binary when the source is newer (or the binary is
+# Compiles CoAwake.swift to the sibling binary when the source is newer (or the binary is
 # missing). Returns 0 when the binary is current — already, or after a successful build — and 1 when
 # swiftc failed, which is the caller's cue to fall back to the interpreted `swift`.
 #
@@ -78,8 +78,19 @@ main() {
 
   launcher_path="$(resolve_script_path)"
   script_dir="${launcher_path:h}"
-  local swift_src="$script_dir/CoAwareness.swift"
-  local swift_bin="$script_dir/CoAwareness"
+  local swift_src="$script_dir/CoAwake.swift"
+  local swift_bin="$script_dir/CoAwake"
+
+  # D2 refusal: refuse retired environment variables before any side effect, detach, or build.
+  for var in ${(k)parameters}; do
+    if [[ "$var" == CO_AWARENESS_* && -n "${(P)var:-}" ]]; then
+      if [[ -x "$swift_bin" ]]; then
+        exec_binary "$@"
+      fi
+      print -u2 "$APP_CMD_NAME: \`$var\` is retired; see --help for the current CO_AWAKE_* environment variables."
+      exit 1
+    fi
+  done
 
   # Help, and the spellings the binary refuses with a pointer to their replacement, go straight to it:
   # on the start path below they would be compiled and detached, and the refusal would land in a log.
@@ -146,16 +157,16 @@ main() {
   if (( ! allow_extra )); then
     # Match the compiled binary by its path — `/CoAwareness` followed by a space (it has args) or
     # end-of-line (no args). The trailing `( |$)` keeps this from matching an editor holding
-    # `CoAwareness.swift` open, or a `swiftc`/`swift` build of the source. (The interpreted
-    # `swift …/CoAwareness.swift` fallback, used only when swiftc fails, is intentionally not
+    # `CoAwake.swift` open, or a `swiftc`/`swift` build of the source. (The interpreted
+    # `swift …/CoAwake.swift` fallback, used only when swiftc fails, is intentionally not
     # singleton-guarded.) pgrep -f excludes its own process; the lowercase launcher path
-    # `co-awareness` never matches this pattern.
+    # `awake` never matches this pattern.
     #
     # `-U "$(id -u)"` scopes the search to the calling user: plain `pgrep -f` sees every user's
     # processes, so with fast user switching this refused user B's *first* launch by naming a PID in
     # user A's session — one B can't see, click, or kill. The guard means "don't stack instances in
     # *my* menu bar", and the menu bar is per-session.
-    existing_pids=($(pgrep -U "$(id -u)" -f "/CoAwareness( |$)" || true))
+    existing_pids=($(pgrep -U "$(id -u)" -f "/CoAwake( |$)" || true))
     if [[ ${#existing_pids[@]} -gt 0 ]]; then
       # `start` is idempotent: with an instance up, the settings go to it instead of a second one.
       # No compile on this path — the resident process is the previous build, and the binary on disk
@@ -171,7 +182,7 @@ main() {
       # Run as a child, not exec'd: exit 3 means the instance pgrep saw is gone by the time the binary
       # looked, and the launch below is then the right answer rather than a GUI attached to this shell.
       rc=0
-      CO_AWARENESS_BIN_NAME="$APP_CMD_NAME" CO_AWARENESS_FORWARD_ONLY=1 \
+      CO_AWAKE_BIN_NAME="$APP_CMD_NAME" CO_AWAKE_FORWARD_ONLY=1 \
         "$swift_bin" start "${passthrough_args[@]}" || rc=$?
       if (( rc != 3 )); then
         exit $rc
@@ -186,7 +197,7 @@ main() {
     swift_cmd=(swift -strict-concurrency=complete -module-cache-path "$swift_module_cache" "$swift_src" "${passthrough_args[@]}")
   fi
 
-  # CO_AWARENESS_LAUNCHER / _LAUNCH_MODE are how the app answers "can I restart myself, and
+  # CO_AWAKE_LAUNCHER / _LAUNCH_MODE are how the app answers "can I restart myself, and
   # how" for the update prompt's Restart button — it cannot infer that on its own, because a
   # detached run and a launchd-supervised one both reparent to pid 1. `detached` means "re-exec this
   # launcher once I've exited"; `attached` means the caller is waiting on us, so the app offers a
@@ -195,11 +206,11 @@ main() {
   # out from under the shell that started it. LAUNCHER is also what the app runs `build` through, so
   # the swiftc invocation lives in this file only.
   if (( launch_detached )); then
-    log_file="${CO_AWARENESS_LOG_FILE:-/tmp/co-awareness.log}"
+    log_file="${CO_AWAKE_LOG_FILE:-/tmp/co-awake.log}"
     mkdir -p -- "$(dirname -- "$log_file")"
-    CO_AWARENESS_BIN_NAME="$APP_CMD_NAME" \
-    CO_AWARENESS_LAUNCHER="$launcher_path" \
-    CO_AWARENESS_LAUNCH_MODE="detached" \
+    CO_AWAKE_BIN_NAME="$APP_CMD_NAME" \
+    CO_AWAKE_LAUNCHER="$launcher_path" \
+    CO_AWAKE_LAUNCH_MODE="detached" \
       nohup "${swift_cmd[@]}" >>"$log_file" 2>&1 < /dev/null &
     pid=$!
     disown "$pid" 2>/dev/null || true
@@ -209,9 +220,9 @@ main() {
     exit 0
   fi
 
-  CO_AWARENESS_BIN_NAME="$APP_CMD_NAME" \
-  CO_AWARENESS_LAUNCHER="$launcher_path" \
-  CO_AWARENESS_LAUNCH_MODE="attached" \
+  CO_AWAKE_BIN_NAME="$APP_CMD_NAME" \
+  CO_AWAKE_LAUNCHER="$launcher_path" \
+  CO_AWAKE_LAUNCH_MODE="attached" \
     exec "${swift_cmd[@]}"
 }
 

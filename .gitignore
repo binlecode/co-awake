@@ -1,3 +1,5 @@
+CoAwake
+CoAwake.new
 CoAwareness
 # The launcher's build temp, renamed over the binary on success. Listed explicitly — a
 # `CoAwareness*` glob would swallow CoAwareness.swift, the only source of truth.

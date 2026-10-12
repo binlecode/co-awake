@@ -10,12 +10,12 @@ import QuartzCore
 // Human-facing app version (semver). Surfaced in --help and the About dialog, and the anchor for
 // CHANGELOG.md releases. Bump this together with a new CHANGELOG entry and git tag.
 private enum AppInfo {
-    static let version = "2.4.2"
-    static let name = "co-awareness"
+    static let version = "3.0.0"
+    static let name = "co-awake"
     static let tagline = "An animated GIF in the macOS menu bar, its playback speed driven by live system load."
     static let copyright = "© 2026 Bin Le"
     static let license = "MIT License"
-    static let repositoryURL = "https://github.com/binlecode/co-awareness"
+    static let repositoryURL = "https://github.com/binlecode/co-awake"
     static var releasesURL: String { "\(repositoryURL)/releases" }
 }
 
@@ -173,7 +173,7 @@ private enum Builder {
     // Read-then-wait is safe for the same reason it is there: the output is one line, far under the
     // pipe buffer, so the child cannot block on it.
     static func precompile(environment: [String: String]) -> (ok: Bool, message: String)? {
-        guard let launcher = environment["CO_AWARENESS_LAUNCHER"], !launcher.isEmpty else {
+        guard let launcher = environment["CO_AWAKE_LAUNCHER"], !launcher.isEmpty else {
             return nil
         }
         let process = Process()
@@ -217,14 +217,14 @@ private enum Restarter {
     }
 
     // Must match `LABEL` in scripts/install-login-item.sh — the plist that owns the login-item job.
-    static let launchAgentLabel = "ai.bera.coawareness"
+    static let launchAgentLabel = "com.binle.coawake"
 
     // Pure so the mapping is testable without a launchd job or a real launcher (tests/restart.swift);
     // the one impure question ("am I the agent's process?") is answered by the caller and passed in.
     static func mode(environment: [String: String], isLaunchAgentJob: Bool) -> Mode {
         if isLaunchAgentJob { return .launchAgent }
-        guard environment["CO_AWARENESS_LAUNCH_MODE"] == "detached",
-              let launcher = environment["CO_AWARENESS_LAUNCHER"], !launcher.isEmpty else {
+        guard environment["CO_AWAKE_LAUNCH_MODE"] == "detached",
+              let launcher = environment["CO_AWAKE_LAUNCHER"], !launcher.isEmpty else {
             return .unsupported
         }
         return .launcher(path: launcher)
@@ -348,8 +348,8 @@ private enum Restarter {
     // enough here because the waiter writes only after we have quit, so nothing of ours is still
     // appending. nullDevice if the file can't be opened: losing the note beats losing the restart.
     private static func logHandle() -> FileHandle {
-        let path = ProcessInfo.processInfo.environment["CO_AWARENESS_LOG_FILE"]
-            ?? "/tmp/co-awareness.log"
+        let path = ProcessInfo.processInfo.environment["CO_AWAKE_LOG_FILE"]
+            ?? "/tmp/co-awake.log"
         if !FileManager.default.fileExists(atPath: path) {
             FileManager.default.createFile(atPath: path, contents: nil)
         }
@@ -1047,6 +1047,9 @@ private enum KeepAwakeColor: Int, CaseIterable {
 // the binding's primary signal is the kqueue exit event and this is only its fallback (see
 // startKeepAwakeProcessMonitor).
 private enum ProcessProbe {
+    static func isLegacyWriterRunning() -> Bool {
+        oldestMatch("CoAwareness") != nil
+    }
     static func isAlive(_ pid: pid_t) -> Bool {
         guard pid > 0 else { return false }
         if kill(pid, 0) == 0 { return true }
@@ -1291,7 +1294,7 @@ private struct Config {
 
     // `--preset`: a built-in preset keyword (e.g. "horse-white") or an absolute/tilde GIF path. Empty
     // means "not given" → the saved preset, else the manifest's defaultPreset.
-    // Keyword→path resolution happens in CoAwarenessApp.init against `allPresets`.
+    // Keyword→path resolution happens in CoAwakeApp.init against `allPresets`.
     let presetOrPath: String
     let speedMultiplierOverride: Double?
     // Which representation appears in the menu bar: .gif (default), .trace (chart), or .value (reading).
@@ -1364,8 +1367,30 @@ private struct Config {
         "--detach": "`--detach` is not accepted; detached is the default",
     ]
     private static let retiredEnvironment: [String: String] = [
-        "CO_AWARENESS_PATH": "CO_AWARENESS_PATH is CO_AWARENESS_PRESET",
-        "CO_AWARENESS_LABEL": "CO_AWARENESS_LABEL is not read; use CO_AWARENESS_DISPLAY",
+        "CO_AWARENESS_PRESET": "CO_AWARENESS_PRESET is CO_AWAKE_PRESET",
+        "CO_AWARENESS_PATH": "CO_AWARENESS_PATH is CO_AWAKE_PRESET",
+        "CO_AWARENESS_DISPLAY": "CO_AWARENESS_DISPLAY is CO_AWAKE_DISPLAY",
+        "CO_AWARENESS_LABEL": "CO_AWARENESS_LABEL is not read; use CO_AWAKE_DISPLAY",
+        "CO_AWARENESS_LOAD_SOURCE": "CO_AWARENESS_LOAD_SOURCE is CO_AWAKE_LOAD_SOURCE",
+        "CO_AWARENESS_KEEP_AWAKE": "CO_AWARENESS_KEEP_AWAKE is CO_AWAKE_KEEP_AWAKE",
+        "CO_AWARENESS_KEEP_AWAKE_PID": "CO_AWARENESS_KEEP_AWAKE_PID is CO_AWAKE_KEEP_AWAKE_PID",
+        "CO_AWARENESS_BATTERY_THRESHOLD": "CO_AWARENESS_BATTERY_THRESHOLD is CO_AWAKE_BATTERY_THRESHOLD",
+        "CO_AWARENESS_EXIT_AFTER": "CO_AWARENESS_EXIT_AFTER is CO_AWAKE_EXIT_AFTER",
+        "CO_AWARENESS_UPDATE_CHECK": "CO_AWARENESS_UPDATE_CHECK is CO_AWAKE_UPDATE_CHECK",
+        "CO_AWARENESS_SHOW_ALL": "CO_AWARENESS_SHOW_ALL is CO_AWAKE_SHOW_ALL",
+        "CO_AWARENESS_STATE_FILE": "CO_AWARENESS_STATE_FILE is CO_AWAKE_STATE_FILE",
+        "CO_AWARENESS_FORCE_THERMAL": "CO_AWARENESS_FORCE_THERMAL is CO_AWAKE_FORCE_THERMAL",
+        "CO_AWARENESS_FORCE_BATTERY": "CO_AWARENESS_FORCE_BATTERY is CO_AWAKE_FORCE_BATTERY",
+        "CO_AWARENESS_FORCE_UNAVAILABLE": "CO_AWARENESS_FORCE_UNAVAILABLE is CO_AWAKE_FORCE_UNAVAILABLE",
+        "CO_AWARENESS_LOG_SLOTS": "CO_AWARENESS_LOG_SLOTS is CO_AWAKE_LOG_SLOTS",
+        "CO_AWARENESS_LOG_ASSERTIONS": "CO_AWARENESS_LOG_ASSERTIONS is CO_AWAKE_LOG_ASSERTIONS",
+        "CO_AWARENESS_LOG_AWAKE": "CO_AWARENESS_LOG_AWAKE is CO_AWAKE_LOG_AWAKE",
+        "CO_AWARENESS_LOG_ANIMATION": "CO_AWARENESS_LOG_ANIMATION is CO_AWAKE_LOG_ANIMATION",
+        "CO_AWARENESS_LOG_THERMAL": "CO_AWARENESS_LOG_THERMAL is CO_AWAKE_LOG_THERMAL",
+        "CO_AWARENESS_LOG_BATTERY_DIAGNOSTICS": "CO_AWARENESS_LOG_BATTERY_DIAGNOSTICS is CO_AWAKE_LOG_BATTERY_DIAGNOSTICS",
+        "CO_AWARENESS_LOG_FILE": "CO_AWARENESS_LOG_FILE is CO_AWAKE_LOG_FILE",
+        "CO_AWARENESS_HOME": "CO_AWARENESS_HOME is CO_AWAKE_HOME",
+        "CO_AWARENESS_REPO_URL": "CO_AWARENESS_REPO_URL is CO_AWAKE_REPO_URL",
     ]
 
     // The first argument. Omitted, or a flag, means `start`. `build` is the launcher's — it compiles
@@ -1375,6 +1400,16 @@ private struct Config {
     }
 
     static func parse() -> ParseResult? {
+        let env = ProcessInfo.processInfo.environment
+        for (name, hint) in retiredEnvironment where env[name]?.isEmpty == false {
+            fputs("\(AppInfo.name): \(hint). Run with --help for the current CO_AWAKE_* environment variables.\n", stderr)
+            return nil
+        }
+        for (key, val) in env where key.hasPrefix("CO_AWARENESS_") && !val.isEmpty {
+            fputs("\(AppInfo.name): `\(key)` is retired; see --help for the current CO_AWAKE_* environment variables.\n", stderr)
+            return nil
+        }
+
         var args = Array(CommandLine.arguments.dropFirst())
 
         if args.contains("--help") || args.contains("-h") {
@@ -1384,7 +1419,7 @@ private struct Config {
         // A retired verb only counts in the verb slot; a retired flag counts anywhere a flag can stand.
         for (index, arg) in args.enumerated() {
             guard let hint = retiredSpellings[arg], index == 0 || arg.hasPrefix("-") else { continue }
-            fputs("co-awareness: \(hint). Run with --help for the full grammar.\n", stderr)
+            fputs("co-awake: \(hint). Run with --help for the full grammar.\n", stderr)
             return nil
         }
 
@@ -1404,7 +1439,7 @@ private struct Config {
             default: return .presets
             }
         case .build?:
-            fputs("`build` compiles the source, so it runs through the co-awareness launcher rather than the binary.\n", stderr)
+            fputs("`build` compiles the source, so it runs through the awake launcher rather than the binary.\n", stderr)
             return nil
         case .start?:
             args.removeFirst()
@@ -1482,7 +1517,7 @@ private struct Config {
             case "--extra":
                 extraInstance = true
             case "--foreground":
-                fputs("--foreground is a launcher flag: the binary always runs attached. Launch through co-awareness to use it.\n", stderr)
+                fputs("--foreground is a launcher flag: the binary always runs attached. Launch through awake to use it.\n", stderr)
                 return nil
             default:
                 if arg.hasPrefix("-") {
@@ -1495,7 +1530,7 @@ private struct Config {
         }
 
         for (name, hint) in retiredEnvironment where env[name]?.isEmpty == false {
-            fputs("co-awareness: \(hint).\n", stderr)
+            fputs("co-awake: \(hint).\n", stderr)
             return nil
         }
         // Flag over env, for launch and forward alike, so both paths read one request. An empty env
@@ -1505,19 +1540,19 @@ private struct Config {
             guard let raw = env[name], !raw.isEmpty else { return nil }
             return raw
         }
-        presetArg = fromEnvironment(presetArg, "CO_AWARENESS_PRESET")
-        displayArg = fromEnvironment(displayArg, "CO_AWARENESS_DISPLAY")
-        loadSourceArg = fromEnvironment(loadSourceArg, "CO_AWARENESS_LOAD_SOURCE")
-        keepAwakeArg = fromEnvironment(keepAwakeArg, "CO_AWARENESS_KEEP_AWAKE")
-        keepAwakePIDArg = fromEnvironment(keepAwakePIDArg, "CO_AWARENESS_KEEP_AWAKE_PID")
-        batteryThresholdArg = fromEnvironment(batteryThresholdArg, "CO_AWARENESS_BATTERY_THRESHOLD")
+        presetArg = fromEnvironment(presetArg, "CO_AWAKE_PRESET")
+        displayArg = fromEnvironment(displayArg, "CO_AWAKE_DISPLAY")
+        loadSourceArg = fromEnvironment(loadSourceArg, "CO_AWAKE_LOAD_SOURCE")
+        keepAwakeArg = fromEnvironment(keepAwakeArg, "CO_AWAKE_KEEP_AWAKE")
+        keepAwakePIDArg = fromEnvironment(keepAwakePIDArg, "CO_AWAKE_KEEP_AWAKE_PID")
+        batteryThresholdArg = fromEnvironment(batteryThresholdArg, "CO_AWAKE_BATTERY_THRESHOLD")
 
         // `start` is idempotent: with an instance of this binary already resident, the request becomes
         // a change to that instance rather than a second menu-bar item. `--extra` is the one way to ask
         // for a second instance anyway, and it skips the question.
         if !extraInstance, let resident = IntentForwarder.residentInstance() {
             guard launchOnlyGiven.isEmpty else {
-                fputs("co-awareness: \(launchOnlyGiven.joined(separator: ", ")) \(launchOnlyGiven.count == 1 ? "takes" : "take") effect only when an instance starts, and one is running (pid \(resident)). Quit it first, or pass --extra for a second instance. Nothing was changed.\n", stderr)
+                fputs("co-awake: \(launchOnlyGiven.joined(separator: ", ")) \(launchOnlyGiven.count == 1 ? "takes" : "take") effect only when an instance starts, and one is running (pid \(resident)). Quit it first, or pass --extra for a second instance. Nothing was changed.\n", stderr)
                 return nil
             }
             guard let intent = IntentForwarder.intent(
@@ -1529,7 +1564,7 @@ private struct Config {
         // The launcher saw an instance and asked this binary for the forward only; it has gone since.
         // Say so with the private status, and let the launcher take the start path it skipped rather
         // than booting a GUI attached to the caller's shell.
-        if env["CO_AWARENESS_FORWARD_ONLY"] == "1" { return .residentGone }
+        if env["CO_AWAKE_FORWARD_ONLY"] == "1" { return .residentGone }
 
         // From here on: a launch. Every value degrades rather than fails — this request can be baked
         // into a login item, and a bad value there must never cost the user the menu-bar app.
@@ -1549,7 +1584,7 @@ private struct Config {
         }
 
         var exitAfterSeconds: TimeInterval?
-        if let raw = ProcessInfo.processInfo.environment["CO_AWARENESS_EXIT_AFTER"],
+        if let raw = ProcessInfo.processInfo.environment["CO_AWAKE_EXIT_AFTER"],
            let parsed = Double(raw), parsed > 0 {
             exitAfterSeconds = parsed
         }
@@ -1557,7 +1592,7 @@ private struct Config {
         // Env can only disable (the --no-update-check flag already covers the CLI side). If the flag
         // disabled it, the env check is moot.
         if updateCheckEnabled,
-           let raw = ProcessInfo.processInfo.environment["CO_AWARENESS_UPDATE_CHECK"]?.lowercased(),
+           let raw = ProcessInfo.processInfo.environment["CO_AWAKE_UPDATE_CHECK"]?.lowercased(),
            ["0", "false", "no"].contains(raw) {
             updateCheckEnabled = false
         }
@@ -1619,7 +1654,7 @@ private struct Config {
 
         // Env can only enable the launch default (the menu toggle covers turning it off at runtime).
         if !showAllSources,
-           let raw = ProcessInfo.processInfo.environment["CO_AWARENESS_SHOW_ALL"]?.lowercased(),
+           let raw = ProcessInfo.processInfo.environment["CO_AWAKE_SHOW_ALL"]?.lowercased(),
            ["1", "true", "yes"].contains(raw) {
             showAllSources = true
         }
@@ -1644,12 +1679,12 @@ private struct Config {
     // sources, the Keep Awake cap, the threshold bounds — is read from the code, so none can drift.
     // Presets are deliberately absent: they are data, and `presets` lists them.
     static func printUsage() {
-        let envBin = ProcessInfo.processInfo.environment["CO_AWARENESS_BIN_NAME"]
+        let envBin = ProcessInfo.processInfo.environment["CO_AWAKE_BIN_NAME"]
         let bin = (envBin?.isEmpty == false) ? envBin! : URL(fileURLWithPath: CommandLine.arguments[0]).lastPathComponent
         let sources = LoadSource.allCases.map(\.key).joined(separator: "|")
         let pct = { (fraction: Double) in Int((fraction * Tuning.percentScale).rounded()) }
         print("""
-        co-awareness \(AppInfo.version) — menu-bar load monitor. Commands print one JSON line; the menu is for people.
+        co-awake \(AppInfo.version) — menu-bar load monitor. Commands print one JSON line; the menu is for people.
 
         Usage: \(bin) [start] [settings] [launch-only]
                \(bin) status | snapshot | presets | build
@@ -1672,7 +1707,7 @@ private struct Config {
           --battery-threshold <pct|off>
                                        Release Keep Awake at this charge on battery (default \(pct(Tuning.batteryLowThresholdDefault)), \(pct(Tuning.batteryThresholdMin))-\(pct(Tuning.batteryThresholdMax)));
                                        at \(pct(Tuning.batteryCriticalThreshold))% or below it always releases
-          Env: CO_AWARENESS_<FLAG> for each (CO_AWARENESS_PRESET, CO_AWARENESS_DISPLAY, …); a flag wins.
+          Env: CO_AWAKE_<FLAG> for each (CO_AWAKE_PRESET, CO_AWAKE_DISPLAY, …); a flag wins.
 
         Launch-only (refused while an instance is running):
           --speed-multiplier <x>       Fixed animation speed instead of load-driven
@@ -1712,7 +1747,7 @@ private enum IntentForwarder {
         keepAwake: String?, keepAwakePID: String?, batteryThreshold: String?
     ) -> StateStore.RuntimeIntent? {
         func refuse(_ message: String) -> StateStore.RuntimeIntent? {
-            fputs("co-awareness: \(message). Nothing was sent to the running instance.\n", stderr)
+            fputs("co-awake: \(message). Nothing was sent to the running instance.\n", stderr)
             return nil
         }
         var intent = StateStore.RuntimeIntent()
@@ -1780,11 +1815,11 @@ private enum IntentForwarder {
         do {
             try StateStore.spoolIntent(stamped)
         } catch {
-            fputs("co-awareness: could not spool the request next to the state file: \(error.localizedDescription). Nothing was sent.\n", stderr)
+            fputs("co-awake: could not spool the request next to the state file: \(error.localizedDescription). Nothing was sent.\n", stderr)
             return 1
         }
         guard kill(pid, SIGUSR1) == 0 else {
-            fputs("co-awareness: instance \(pid) exited before it could be told. Nothing was changed.\n", stderr)
+            fputs("co-awake: instance \(pid) exited before it could be told. Nothing was changed.\n", stderr)
             return 1
         }
         print("{\"action\":\"forwarded\",\"pid\":\(pid)}")
@@ -1850,13 +1885,13 @@ private struct PersistedState: Codable {
 // failure IS fatal.
 private enum StateStore {
     static let currentVersion = 1
-    private static let directoryName = "co-awareness"
+    private static let directoryName = "co-awake"
     private static let fileName = "state.json"
 
     // Test scaffolding, like CO_AWARENESS_EXIT_AFTER: point the state file somewhere under
     // tmp/ so a smoke test never touches the real Application Support directory.
     static var fileURL: URL? {
-        if let override = ProcessInfo.processInfo.environment["CO_AWARENESS_STATE_FILE"],
+        if let override = ProcessInfo.processInfo.environment["CO_AWAKE_STATE_FILE"],
            !override.isEmpty {
             return URL(fileURLWithPath: NSString(string: override).expandingTildeInPath)
         }
@@ -1944,14 +1979,35 @@ private enum StateStore {
     // failure is silent, like every other StateStore path. Deliberately not part of `fileURL`:
     // `status` must stay read-only (§ 8.3), so only the GUI boot path calls this.
     static func migrateLegacyDirectoryIfNeeded() {
+        if let override = ProcessInfo.processInfo.environment["CO_AWAKE_STATE_FILE"], !override.isEmpty {
+            return
+        }
         guard let base = try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         ) else { return }
-        let legacy = base.appendingPathComponent("menubar-load-runner", isDirectory: true)
-        let current = base.appendingPathComponent(directoryName, isDirectory: true)
-        guard FileManager.default.fileExists(atPath: legacy.path),
-              !FileManager.default.fileExists(atPath: current.path) else { return }
-        try? FileManager.default.moveItem(at: legacy, to: current)
+        let currentDir = base.appendingPathComponent(directoryName, isDirectory: true)
+        let currentStateFile = currentDir.appendingPathComponent(fileName)
+        if FileManager.default.fileExists(atPath: currentStateFile.path) {
+            return
+        }
+        if ProcessProbe.isLegacyWriterRunning() {
+            return
+        }
+        let legacyNames = ["co-awareness", "menubar-load-runner"]
+        for legacyName in legacyNames {
+            let legacyDir = base.appendingPathComponent(legacyName, isDirectory: true)
+            let legacyStateFile = legacyDir.appendingPathComponent(fileName)
+            guard FileManager.default.fileExists(atPath: legacyStateFile.path) else { continue }
+            if !FileManager.default.fileExists(atPath: currentDir.path) {
+                if (try? FileManager.default.moveItem(at: legacyDir, to: currentDir)) != nil {
+                    return
+                }
+            }
+            if !FileManager.default.fileExists(atPath: currentStateFile.path) {
+                try? FileManager.default.moveItem(at: legacyStateFile, to: currentStateFile)
+                return
+            }
+        }
     }
 
     static func load() -> PersistedState? {
@@ -2914,7 +2970,7 @@ enum KernelThermalPressure: String {
     // otherwise ship unverified. Mirrors CO_AWARENESS_FORCE_BATTERY. Unset or unparseable =
     // no override, real read.
     private static let forced: KernelThermalPressure? = {
-        guard let raw = ProcessInfo.processInfo.environment["CO_AWARENESS_FORCE_THERMAL"],
+        guard let raw = ProcessInfo.processInfo.environment["CO_AWAKE_FORCE_THERMAL"],
               !raw.isEmpty else { return nil }
         return KernelThermalPressure(rawValue: raw.lowercased().trimmingCharacters(in: .whitespaces))
     }()
@@ -3134,7 +3190,7 @@ private final class BatteryLoadMonitor {
     // hook that only one of them honored would have them disagree about the same battery under the
     // same run. Current (mA) is left real: the hook simulates a charge and a power state, nothing else.
     static let forcedState: (onBattery: Bool, percent: Double)? = {
-        guard let raw = ProcessInfo.processInfo.environment["CO_AWARENESS_FORCE_BATTERY"],
+        guard let raw = ProcessInfo.processInfo.environment["CO_AWAKE_FORCE_BATTERY"],
               !raw.isEmpty else { return nil }
         let parts = raw.lowercased().split(separator: ":", omittingEmptySubsequences: false)
         guard let percent = Double(parts[0].trimmingCharacters(in: .whitespaces)),
@@ -3184,7 +3240,7 @@ struct BatteryDiagnostics: Equatable, Sendable {
 
 enum BatteryDiagnosticsReader {
     static func readDiagnostics() -> BatteryDiagnostics? {
-        if let raw = ProcessInfo.processInfo.environment["CO_AWARENESS_FORCE_UNAVAILABLE"],
+        if let raw = ProcessInfo.processInfo.environment["CO_AWAKE_FORCE_UNAVAILABLE"],
            raw.lowercased().split(separator: ",").map({ $0.trimmingCharacters(in: .whitespaces) }).contains("battery") {
             return nil
         }
@@ -3898,7 +3954,7 @@ private final class TelemetryCore {
     // fallback-to-cpu, and the absent snapshot key. Empty/unset = no override. Mirrors the EXIT_AFTER
     // hook convention.
     private let forcedUnavailableSources: Set<String> = {
-        guard let raw = ProcessInfo.processInfo.environment["CO_AWARENESS_FORCE_UNAVAILABLE"] else { return [] }
+        guard let raw = ProcessInfo.processInfo.environment["CO_AWAKE_FORCE_UNAVAILABLE"] else { return [] }
         return Set(raw.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
     }()
 }
@@ -4362,7 +4418,7 @@ private enum PresetRegistry {
     }
 
     // Resolve the resource base directory (which holds `gifs/`). Prefer the running executable's own
-    // directory: the compiled `CoAwareness` binary sits next to `gifs/`, and the executable path is
+    // directory: the compiled `CoAwake` binary sits next to `gifs/`, and the executable path is
     // absolute and independent of both the current working directory and the path passed to the
     // compiler. `#filePath` (the source path baked in at compile time) is only correct when the binary
     // is run from the right CWD *and* was compiled with an absolute path, which is exactly how a
@@ -4406,7 +4462,7 @@ private enum PresetRegistry {
 }
 
 @MainActor
-private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
+private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private struct SpeedProfile {
         let label: String
         let min: Double
@@ -4737,7 +4793,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
             // (contains "/" or ends ".gif") is deliberately NOT caught here: if it's missing,
             // loadFrames still surfaces the fatal "GIF file not found", per the QA §4a contract —
             // pointing at a specific file that isn't there is worth telling the user about.
-            fputs("\"\(requested)\" is not a known preset or an existing GIF file; using the default preset \"\(fallback.key)\". Run `co-awareness presets` to list them.\n", stderr)
+            fputs("\"\(requested)\" is not a known preset or an existing GIF file; using the default preset \"\(fallback.key)\". Run `awake presets` to list them.\n", stderr)
             self.activeGifPath = fallback.path
             self.activePreset = fallback
         } else {
@@ -4794,7 +4850,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
         self.countdownLabel = countdownLabel
 
         button.toolTip = activeGifPath
-        button.setAccessibilityLabel("co-awareness")
+        button.setAccessibilityLabel("co-awake")
 
         infoMenu = NSMenu()
         infoMenu.delegate = self
@@ -5018,7 +5074,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
         // Debug/test hook (CO_AWARENESS_EXIT_AFTER): self-terminate so smoke tests exit 0
         // on their own rather than relying on an external kill against the blocking run loop.
         if let seconds = config.exitAfterSeconds {
-            fputs("CO_AWARENESS_EXIT_AFTER=\(seconds): terminating after \(seconds)s.\n", stderr)
+            fputs("CO_AWAKE_EXIT_AFTER=\(seconds): terminating after \(seconds)s.\n", stderr)
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
                 MainActor.assumeIsolated { NSApp.terminate(nil) }
             }
@@ -5331,7 +5387,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
         }
         guard let current = SemVer(AppInfo.version), latest > current else {
             informational(title: "You're up to date",
-                          message: "co-awareness \(AppInfo.version) is the latest release.")
+                          message: "co-awake \(AppInfo.version) is the latest release.")
             return
         }
         promptSelfUpdate()
@@ -5423,7 +5479,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
             environment: ProcessInfo.processInfo.environment,
             isLaunchAgentJob: Restarter.isLaunchAgentJob()
         )
-        let manualHint = "Restart co-awareness to load the new version — quit from the menu and relaunch (it also starts fresh at next login)."
+        let manualHint = "Restart co-awake to load the new version — quit from the menu and relaunch (it also starts fresh at next login)."
         guard mode != .unsupported else {
             informational(title: title, message: manualHint)
             return
@@ -5647,7 +5703,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
             return
         }
         let alert = NSAlert()
-        alert.messageText = "co-awareness startup error"
+        alert.messageText = "co-awake startup error"
         if let icon = makeMenuAlertIcon() {
             alert.icon = icon
         }
@@ -5902,9 +5958,9 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
         if telemetry.hasSample(source) {
             let state = stateText(for: source)
             let spokenState = source == .memory ? "pressure \(state)" : state
-            statusItem.button?.setAccessibilityLabel("co-awareness — \(spokenReading(for: source)), \(spokenState)")
+            statusItem.button?.setAccessibilityLabel("co-awake — \(spokenReading(for: source)), \(spokenState)")
         } else {
-            statusItem.button?.setAccessibilityLabel("co-awareness — measuring \(spokenName(for: source))")
+            statusItem.button?.setAccessibilityLabel("co-awake — measuring \(spokenName(for: source))")
         }
 
         if isAutoSpeed {
@@ -6459,14 +6515,14 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
     }
 
     // Debug/test hook: CO_AWARENESS_LOG_ASSERTIONS=1. Mirrors the LOG_SLOTS hook convention.
-    private let logAssertions = ProcessInfo.processInfo.environment["CO_AWARENESS_LOG_ASSERTIONS"] == "1"
+    private let logAssertions = ProcessInfo.processInfo.environment["CO_AWAKE_LOG_ASSERTIONS"] == "1"
 
     // Debug/test hook: CO_AWARENESS_LOG_AWAKE=1, sibling to LOG_ASSERTIONS and LOG_SLOTS and there
     // for the same reason — a shell with no TCC grant can't read a menu, so the DERIVED state has to be
     // assertable from stderr or it goes verified by eyeball only. Prints the row text verbatim as well as
     // the flags, so qa.sh §3e can assert the rendering (attribution, "may still sleep", the countdown
     // moving) and not merely the booleans behind it.
-    private let logAwake = ProcessInfo.processInfo.environment["CO_AWARENESS_LOG_AWAKE"] == "1"
+    private let logAwake = ProcessInfo.processInfo.environment["CO_AWAKE_LOG_AWAKE"] == "1"
 
     // MARK: - Observability logging
 
@@ -6492,7 +6548,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
     // LOG_AWAKE and there for the same no-TCC-grant reason: whether the icon is animating is otherwise
     // only visible to a screenshot (Screen Recording) or an eyeball. Prints the DERIVED gate plus the
     // raw frame cursor, so a test asserts both the decision and its effect (frame stops moving).
-    private let logAnimation = ProcessInfo.processInfo.environment["CO_AWARENESS_LOG_ANIMATION"] == "1"
+    private let logAnimation = ProcessInfo.processInfo.environment["CO_AWAKE_LOG_ANIMATION"] == "1"
 
     private func logAnimationIfRequested() {
         guard logAnimation else { return }
@@ -6517,7 +6573,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
     // Read-only: it prints the title refreshMenuMetrics has just assigned and never assigns one itself,
     // so enabling it cannot make the menu render a branch it would not have rendered. Emitted on the
     // same 2s cadence as LOG_SLOTS, off the same call.
-    private let logThermal = ProcessInfo.processInfo.environment["CO_AWARENESS_LOG_THERMAL"] == "1"
+    private let logThermal = ProcessInfo.processInfo.environment["CO_AWAKE_LOG_THERMAL"] == "1"
 
     private func logThermalIfRequested() {
         guard logThermal else { return }
@@ -6541,7 +6597,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
     // make the menu render the diagnostics branch (§ 4.6) at a moment the menu was never open — an
     // observability hook may not move a business decision. Off the menu-open path it reads its own
     // throwaway copy, which is what lets a headless `EXIT_AFTER` run assert the reader at all.
-    private let logBatteryDiagnostics = ProcessInfo.processInfo.environment["CO_AWARENESS_LOG_BATTERY_DIAGNOSTICS"] == "1"
+    private let logBatteryDiagnostics = ProcessInfo.processInfo.environment["CO_AWAKE_LOG_BATTERY_DIAGNOSTICS"] == "1"
 
     private func logBatteryDiagnosticsIfRequested() {
         guard logBatteryDiagnostics else { return }
@@ -6572,7 +6628,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
     // the app inspecting its own window, so unlike a screenshot (Screen Recording) or a menu dump
     // (Accessibility) it needs no TCC grant at all — which is what makes it scriptable in qa.sh §3.
     private func logSlotGeometry() {
-        guard ProcessInfo.processInfo.environment["CO_AWARENESS_LOG_SLOTS"] == "1" else { return }
+        guard ProcessInfo.processInfo.environment["CO_AWAKE_LOG_SLOTS"] == "1" else { return }
         func frame(_ item: NSStatusItem?) -> String {
             guard let f = item?.button?.window?.frame else { return "x=n/a w=n/a" }
             return String(format: "x=%.1f w=%.1f", f.minX, f.width)
@@ -6684,7 +6740,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
             renderCurrentFrame()
             button.needsDisplay = true
             let cdSpoken = countdown.map { ", \($0) remaining" } ?? ""
-            button.setAccessibilityLabel("co-awareness — \(spokenReading(for: activeLoadSource))\(cdSpoken)")
+            button.setAccessibilityLabel("co-awake — \(spokenReading(for: activeLoadSource))\(cdSpoken)")
 
         case .trace:
             if animationView?.isHidden != true { animationView?.isHidden = true }
@@ -6707,7 +6763,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
             if button.imagePosition != .imageOnly { button.imagePosition = .imageOnly }
             button.needsDisplay = true
             let cdSpoken = countdown.map { ", \($0) remaining" } ?? ""
-            button.setAccessibilityLabel("co-awareness — \(spokenReading(for: activeLoadSource)) trace chart\(cdSpoken)")
+            button.setAccessibilityLabel("co-awake — \(spokenReading(for: activeLoadSource)) trace chart\(cdSpoken)")
 
         case .value:
             if animationView?.isHidden != true { animationView?.isHidden = true }
@@ -7647,7 +7703,7 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
             return
         }
         let alert = NSAlert()
-        alert.messageText = "co-awareness"
+        alert.messageText = "co-awake"
         if let icon = makeMenuAlertIcon() {
             alert.icon = icon
         }
@@ -7813,9 +7869,9 @@ private final class CoAwarenessApp: NSObject, NSApplicationDelegate, NSMenuDeleg
 
         let callback: @convention(c) (UnsafeMutableRawPointer?) -> Void = { ctx in
             guard let ctx else { return }
-            let app = Unmanaged<CoAwarenessApp>.fromOpaque(ctx).takeUnretainedValue()
+            let app = Unmanaged<CoAwakeApp>.fromOpaque(ctx).takeUnretainedValue()
             MainActor.assumeIsolated {
-                app.batteryState = CoAwarenessApp.evaluateBatteryState()
+                app.batteryState = CoAwakeApp.evaluateBatteryState()
                 app.conditionsDidChange()
             }
         }
@@ -8208,7 +8264,7 @@ case .residentGone:
     exit(3)
 case .config(let config):
     let app = NSApplication.shared
-    let delegate = CoAwarenessApp(config: config)
+    let delegate = CoAwakeApp(config: config)
     app.delegate = delegate
     app.run()
 case .help:
