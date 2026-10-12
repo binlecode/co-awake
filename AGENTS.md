@@ -94,17 +94,17 @@ This file provides guidance to Claude Code (claude.ai/code) and all coding agent
 
 ```bash
 # 启动与运行（首参是动词，缺省即 start；start 幂等：已有实例则把设置转发给它）
-./co-awake                       # start：已保存设置或默认预设，后台脱离终端运行
-./co-awake --foreground           # 前台运行（查看 stderr / print 输出）；已有实例时报错
-./co-awake --preset dog-black --display value   # 指定预设 + 状态栏数值读数（运行中即热切换）
-./co-awake --load-source bandwidth    # 以 DRAM 总线带宽 (GB/s) 驱动动画
-./co-awake snapshot               # 单行 JSON 快照（物理单位），随即退出；无 GUI / 无 state.json / 无编译
-./co-awake status                 # 单行 JSON：是否有常驻实例、Keep Awake 状态
-./co-awake presets                # 单行 JSON：内置预设（取自 gifs/presets.json）
-./co-awake --help                 # 唯一 help 由二进制生成，不列预设
+./awake                          # start：已保存设置或默认预设，后台脱离终端运行
+./awake --foreground             # 前台运行（查看 stderr / print 输出）；已有实例时报错
+./awake --preset dog-black --display value   # 指定预设 + 状态栏数值读数（运行中即热切换）
+./awake --load-source bandwidth  # 以 DRAM 总线带宽 (GB/s) 驱动动画
+./awake snapshot                 # 单行 JSON 快照（物理单位），随即退出；无 GUI / 无 state.json / 无编译
+./awake status                   # 单行 JSON：是否有常驻实例、Keep Awake 状态
+./awake presets                  # 单行 JSON：内置预设（取自 gifs/presets.json）
+./awake --help                   # 唯一 help 由二进制生成，不列预设
 
 # 编译与无启动检查
-./co-awake build                  # 仅当源码较新时原子编译，不启动（保持运行实例不损坏）
+./awake build                    # 仅当源码较新时原子编译，不启动（保持运行实例不损坏）
 swiftc -O -strict-concurrency=complete CoAwake.swift -o tmp/coaware-check  # 快速编译检查
 
 # 自动化测试与调试钩子（均无需 TCC / 辅助功能权限）

@@ -43,6 +43,7 @@ of the public API and may change in any release.
 - **Environment variables**: All environment variables and QA/debug hooks use the `CO_AWAKE_*` prefix (e.g. `CO_AWAKE_PRESET`, `CO_AWAKE_DISPLAY`, `CO_AWAKE_KEEP_AWAKE`). Any non-empty `CO_AWARENESS_*` variable is refused with exit code 1 naming its replacement.
 - **LaunchAgent label**: Login item label is `com.binle.coawake` (replaces `ai.bera.coawareness`).
 - **State directory**: Migrated to `~/Library/Application Support/co-awake` with chained migration supporting legacy `co-awareness` and `menubar-load-runner`.
+- **`--extra` state isolation and lifecycle defense**: An instance launched with `--extra` is strictly read-only with respect to `state.json` (skipping `persistState()`, legacy directory migration, and intent queue consumption), defending the single-writer invariant against concurrent instances. It preserves `--extra` across in-app restarts.
 
 ### Upgrade Notes
 - **Do not upgrade via menu Update**: Because the launcher filename changes across the major release, updating from the v2.4.x menu will break the running instance. Instead, reinstall using:

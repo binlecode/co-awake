@@ -291,9 +291,11 @@ private enum Restarter {
         speedMultiplierOverride: Double?,
         showAllSources: Bool,
         keepAwakeIndefinite: Bool,
-        keepAwakeBoundPID: pid_t?
+        keepAwakeBoundPID: pid_t?,
+        extraInstance: Bool = false
     ) -> [String] {
         var args: [String] = []
+        if extraInstance { args.append("--extra") }
         if !presetOrPath.isEmpty { args += ["--preset", presetOrPath] }
         args += ["--load-source", loadSourceKey]
         args += ["--display", displayArgument]
@@ -1324,6 +1326,9 @@ private struct Config {
     // an explicit "never release on charge alone". Three states, not two — the asymmetry with `label`
     // is that here "off" is a value rather than a mode.
     let batteryThreshold: Double?
+    // Whether this instance was launched with `--extra` (bypassing the resident check).
+    // An extra instance never writes state.json, preserving the single-writer invariant of the main resident instance.
+    let extraInstance: Bool
 
     // `--battery-threshold <pct|off>` / CO_AWARENESS_BATTERY_THRESHOLD → a charge fraction, or
     // nil if the text is not a form we accept (the caller warns and falls back).
@@ -1670,7 +1675,8 @@ private struct Config {
                 updateCheckEnabled: updateCheckEnabled,
                 showAllSources: showAllSources,
                 keepAwake: keepAwake,
-                batteryThreshold: batteryThreshold
+                batteryThreshold: batteryThreshold,
+                extraInstance: extraInstance
             )
         )
     }
@@ -4808,8 +4814,10 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Before anything reads or writes persisted state: the one-time silent move out of the
         // pre-rename directory (R26). GUI-only by construction — the headless paths never get
-        // here, and `status` must stay read-only (§ 8.3).
-        StateStore.migrateLegacyDirectoryIfNeeded()
+        // here, and `status` must stay read-only (§ 8.3). Extra instances never migrate or touch legacy dirs.
+        if !config.extraInstance {
+            StateStore.migrateLegacyDirectoryIfNeeded()
+        }
 
         NSApp.setActivationPolicy(.accessory)
 
@@ -4925,7 +4933,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         refreshPresetSelectionState()
         updateDisplaySlot()        // configure the status item for the initial display mode
         refreshSourceListState()
-        setupSignalHandler()
+        if !config.extraInstance {
+            setupSignalHandler()
+        }
         // caffeinate exited on its own → an armed window elapsed. Drop the window and let the UI fall
         // back to Off; the Mac is free to sleep from here. This is the whole timed release.
         sleepPreventer.onWindowExpired = { [weak self] in
@@ -5525,7 +5535,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             // the user turned off, and a pid outlives the intent that bound it.
             keepAwakeBoundPID: sleepPreventer.isEnabled
                 ? keepAwakeBoundPID.flatMap { ProcessProbe.isAlive($0) ? $0 : nil }
-                : nil
+                : nil,
+            extraInstance: config.extraInstance
         )
         guard let command = Restarter.restartCommand(mode: mode, appArguments: arguments, uid: getuid()),
               Restarter.spawnRestart(command: command) else {
@@ -7306,6 +7317,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // runs on every thermal/battery/power notification: those change the RUNNING state, not the intent,
     // and would write to disk for nothing.
     private func persistState() {
+        guard !config.extraInstance else { return }
         StateStore.save(
             PersistedState(
                 version: StateStore.currentVersion,

@@ -39,7 +39,7 @@ curl -fsSL https://raw.githubusercontent.com/binlecode/co-awake/main/install.sh 
 ```
 
 The installer clones the repo to `~/.local/share/co-awake`, compiles the binary, and
-symlinks the launcher to `~/.local/bin/co-awake`. Run interactively, it also asks
+symlinks the launcher to `~/.local/bin/awake`. Run interactively, it also asks
 whether to enable start-at-login (pass `--login` to enable it without prompting; a piped
 `curl | bash` skips the prompt). Re-running updates an existing install in place (`git pull`).
 
@@ -57,7 +57,7 @@ Already have the repo checked out? Skip the installer — see **Run Locally**.
 - `install.sh`: one-line installer (clone + compile + symlink launcher onto `PATH`; see Install above).
 - `uninstall.sh`: reverses `install.sh` (LaunchAgent, running instance, symlink, install dir).
 - `LICENSE.md`: MIT license (covers the source code; the bundled GIFs are third-party — see Assets & attribution).
-- `co-awake`: launcher script.
+- `awake`: launcher script.
 - `scripts/install-login-item.sh` / `scripts/uninstall-login-item.sh`: optional start-at-login setup (see below).
 - `CHANGELOG.md`: release history (Keep a Changelog + semver).
 - `gifs/running-dog-white.gif`: built-in white dog preset (transparent).
@@ -104,24 +104,24 @@ Notes:
 
 ## Global command
 
-The installer symlinks the launcher onto your `PATH` (at `~/.local/bin/co-awake`), so you
-can launch it as **`co-awake`** from any folder:
+The installer symlinks the launcher onto your `PATH` (at `~/.local/bin/awake`), so you
+can launch it as **`awake`** from any folder:
 
 ```bash
-co-awake --preset dog-black
+awake --preset dog-black
 ```
 
 Running from a cloned repo instead? Symlink it yourself:
 
 ```bash
-ln -s "$PWD/co-awake" ~/.local/bin/co-awake
+ln -s "$PWD/awake" ~/.local/bin/awake
 ```
 
 The first argument is a command; leave it out and it means `start`:
 
 | Command | Does |
 |---|---|
-| `co-awake [start] [flags]` | Start in the menu bar, or apply the flags to the instance already running |
+| `awake [start] [flags]` | Start in the menu bar, or apply the flags to the instance already running |
 | `awake status` | One JSON line: is an instance up, and is it holding the Mac awake ([more](#ask-whether-one-is-already-running-status)) |
 | `awake snapshot` | One JSON line with every sensor reading, without touching the menu bar ([more](#read-the-sensors-from-a-script-snapshot)) |
 | `awake presets` | One JSON line listing the built-in presets |
@@ -666,4 +666,4 @@ please open an issue and it will be taken down
 promptly.
 
 You don't need the bundled GIFs — point the app at any GIF you have the rights to use:
-`co-awake --preset /absolute/path/to/your.gif` (or set `CO_AWAKE_PRESET`).
+`awake --preset /absolute/path/to/your.gif` (or set `CO_AWAKE_PRESET`).
