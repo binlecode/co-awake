@@ -80,8 +80,11 @@ skip(){ printf '\n=== %s ===\n  SKIPPED (%s)\n' "$1" "$2"; }
 
 # --- §1 Build (warning-clean) — always: the gate AND the prerequisite for §2/§3/§4 ---------
 section "§1 build (warning-clean) [core]"
-out=$(swiftc -O -strict-concurrency=complete CoAwake.swift -o "$BIN" 2>&1)
-if [ -z "$out" ]; then echo "  PASS build warning-clean"; else echo "  FAIL build output:"; echo "$out"; total_fail=$((total_fail+1)); fi
+# Both halves: swiftc can exit non-zero with nothing on stderr (a killed or crashed driver), and can
+# exit 0 with warnings. Either one alone is not a clean build.
+out=$(swiftc -O -strict-concurrency=complete CoAwake.swift -o "$BIN" 2>&1); rc=$?
+if [ "$rc" = 0 ] && [ -z "$out" ]; then echo "  PASS build exit 0, warning-clean"
+else echo "  FAIL build rc=$rc, output:"; echo "$out"; total_fail=$((total_fail+1)); fi
 
 # --- §2 CLI parse + version [core] -----------------------------------------
 if [ "$RUN_NONGUI" = 1 ]; then
@@ -176,7 +179,7 @@ vchk(){ grep -q "$2" "$3" && { echo "  PASS $1 shows $VER"; pass=$((pass+1)); } 
 $BIN --help 2>&1 | grep -q "co-awake $VER" && { echo "  PASS --help shows $VER"; pass=$((pass+1)); } || { echo "  FAIL --help missing $VER"; fail=$((fail+1)); }
 vchk "CHANGELOG"   "## \[$VER\]"                     CHANGELOG.md
 vchk "README"      "Current version: \*\*$VER\*\*"   README.md
-vchk "cover badge" ">v$VER<"                         docs/cover.html
+vchk "cover badge" ">v$VER<"                         docs/media/cover.html
 echo "  parse: passes=$pass fails=$fail"; total_fail=$((total_fail+fail))
 else
 skip "§2 CLI parse paths [core]" "core tier not selected (--gui)"
@@ -200,10 +203,22 @@ ok "exit 0" "$([ "$rc" = 0 ] && echo 1 || echo 0)" "rc=$rc"
 ok "stdout is exactly one line" "$([ "$(wc -l <"$J" | tr -d ' ')" = 1 ] && echo 1 || echo 0)" "got $(wc -l <"$J") lines"
 plutil -convert json -o - - <"$J" >/dev/null 2>&1; pj=$?
 ok "stdout parses as JSON" "$([ "$pj" = 0 ] && echo 1 || echo 0)" "got: $(cat "$J")"
-# The four keys the schema says are never absent — a snapshot that degrades to `{"v":1}` on a
-# machine with nine working readers is a pass under "absent when unavailable" and a lie in practice.
-miss=""; for k in '"v":' '"cpu_pct":' '"mem_pct":' '"thermal":'; do grep -q -- "$k" "$J" || miss="$miss $k"; done
+# The keys every supported macOS answers — a snapshot that degrades to `{"v":1}` on a machine with
+# nine working readers is a pass under "absent when unavailable" and a lie in practice.
+miss=""; for k in '"v":' '"cpu_pct":' '"mem_pct":'; do grep -q -- "$k" "$J" || miss="$miss $k"; done
 ok "carries the always-present keys" "$([ -z "$miss" ] && echo 1 || echo 0)" "missing:$miss"
+# The categorical keys a caller gates work on. Absence is legal (a refused sysctl, a UPS supply) and
+# is a NOTE; a value outside the vocabulary is the failure — it is what a fabricated default looks like
+# once someone widens the fallback.
+for kv in "memory_pressure:normal|warn|critical" "power_source:ac|battery" "thermal:nominal|fair|serious|critical"; do
+  k=${kv%%:*}; allowed=${kv#*:}
+  if grep -q "\"$k\":" "$J"; then
+    v=$(sed -E "s/.*\"$k\":\"([^\"]*)\".*/\1/" "$J")
+    ok "$k is a stated level ($v)" "$(echo "$v" | grep -qxE "$allowed" && echo 1 || echo 0)" "got $v"
+  else
+    echo "  NOTE [$k absent — the system did not state it on this run]"
+  fi
+done
 ok "under 500 ms wall (${real}s)" "$(awk -v r="$real" 'BEGIN{print (r>0 && r<0.5) ? 1 : 0}')" "real=${real}s"
 
 # Takes nothing: every flag configures a GUI this path never builds. Stdout must stay EMPTY — a
@@ -215,12 +230,58 @@ ok "…says why, on stderr, with stdout empty" \
 
 # An unavailable source is an ABSENT key, never a null and never a 0 — asserted through the existing
 # simulator, since every reader really works on this hardware.
-CO_AWAKE_FORCE_UNAVAILABLE=gpu $BIN snapshot >"$J" 2>/dev/null; rc=$?
-ok "a forced-unavailable source drops its key" \
-   "$([ "$rc" = 0 ] && ! grep -q '"gpu_pct"' "$J" && echo 1 || echo 0)" "got: $(cat "$J")"
+# One row per source whose keys are built differently: gpu (one reader, three keys), battery (the
+# charge reader plus its diagnostics), temperature (where the reader holds a scale floor that would
+# otherwise leak out as a reading). The vocabulary checks above can only judge a key that is there;
+# these are the half that proves an unknown reading is a missing key.
+fu(){ src="$1"; shift; CO_AWAKE_FORCE_UNAVAILABLE=$src $BIN snapshot >"$J" 2>/dev/null; rc=$?
+  leaked=""; for k in "$@"; do grep -q "\"$k\":" "$J" && leaked="$leaked $k"; done
+  ok "forced-unavailable $src drops $*" "$([ "$rc" = 0 ] && grep -q '"v":' "$J" && [ -z "$leaked" ] && echo 1 || echo 0)" "rc=$rc leaked:$leaked got: $(cat "$J")"; }
+fu gpu         gpu_pct gpu_rend_pct gpu_tiler_pct
+fu battery     battery_pct battery_a battery_health_pct battery_cycles
+fu temperature temp_c
+# Note on temp_c parked branch: fu temperature validates that an unavailable sensor drops temp_c;
+# the parked cluster protection (!temperatureMonitor.perSensor.isEmpty) is verified by code inspection
+# as simulating an all-cluster parked state with hasSample=true requires hardware kernel gating.
+
+# Power-source decoupling: FORCE_UNAVAILABLE=battery disables the battery charge reader, but
+# power_source reflects the IOPS supply description (docs/ARCHITECTURE.md § 4.7).
+CO_AWAKE_FORCE_UNAVAILABLE=battery CO_AWAKE_FORCE_BATTERY=15:battery $BIN snapshot >"$J" 2>/dev/null; rc=$?
+ok "FORCE_UNAVAILABLE=battery drops battery metrics but allows forced battery power_source" \
+   "$([ "$rc" = 0 ] && grep -q '"v":' "$J" && ! grep -q '"battery_pct"' "$J" && grep -q '"power_source":"battery"' "$J" && echo 1 || echo 0)" "got: $(cat "$J")"
+CO_AWAKE_FORCE_UNAVAILABLE=battery CO_AWAKE_FORCE_BATTERY=15:ac $BIN snapshot >"$J" 2>/dev/null; rc=$?
+ok "FORCE_UNAVAILABLE=battery drops battery metrics but allows forced AC power_source" \
+   "$([ "$rc" = 0 ] && grep -q '"v":' "$J" && ! grep -q '"battery_pct"' "$J" && grep -q '"power_source":"ac"' "$J" && echo 1 || echo 0)" "got: $(cat "$J")"
 CO_AWAKE_FORCE_BATTERY=15:battery $BIN snapshot >"$J" 2>/dev/null
 ok "a forced charge reaches the snapshot" \
-   "$(grep -q '"battery_pct":15.0' "$J" && echo 1 || echo 0)" "got: $(cat "$J")"
+   "$(grep -q '"battery_pct":15.0' "$J" && grep -q '"power_source":"battery"' "$J" && echo 1 || echo 0)" "got: $(cat "$J")"
+CO_AWAKE_FORCE_BATTERY=15:ac $BIN snapshot >"$J" 2>/dev/null
+ok "a forced AC state reaches power_source" \
+   "$(grep -q '"power_source":"ac"' "$J" && echo 1 || echo 0)" "got: $(cat "$J")"
+
+# FORCE_THERMAL drives the menu's annotation; the snapshot is what an agent gates work on, so the hook
+# must never reach it. Force a level DIFFERENT from the real one — forcing "critical" on a machine that
+# really is critical would pass with the leak in place. The real level is read twice around the forced
+# run; if it moved in between, the comparison means nothing and is a NOTE.
+lvl(){ sed -nE 's/.*"thermal":"([a-z]+)".*/\1/p' "$J"; }
+$BIN snapshot >"$J" 2>/dev/null; rc0=$?; t0=$(lvl)
+if [ "$rc0" != 0 ]; then
+  ok "initial thermal snapshot exits 0" 0 "rc0=$rc0"
+elif [ -z "$t0" ]; then
+  echo "  NOTE [thermal absent on this run — FORCE_THERMAL isolation not observable]"
+else
+  fl=critical; [ "$t0" = critical ] && fl=fair
+  CO_AWAKE_FORCE_THERMAL=$fl $BIN snapshot >"$J" 2>/dev/null; rcf=$?; tf=$(lvl)
+  $BIN snapshot >"$J" 2>/dev/null; rc1=$?; t1=$(lvl)
+  if [ "$rcf" != 0 ] || [ "$rc1" != 0 ]; then
+    ok "FORCE_THERMAL=$fl snapshot runs exit 0" 0 "rcf=$rcf rc1=$rc1"
+  elif [ "$t0" != "$t1" ]; then
+    echo "  NOTE [real thermal moved $t0 -> $t1 during the check — FORCE_THERMAL isolation not judged]"
+  else
+    ok "FORCE_THERMAL=$fl does not reach the snapshot (real $t0, forced run $tf)" \
+       "$([ "$tf" = "$t0" ] && echo 1 || echo 0)" "real=$t0 forced-run=${tf:-absent}"
+  fi
+fi
 
 # R25's three readings. Each is HARDWARE-conditional — an Intel Mac publishes no cluster map, a
 # machine with no AMCC channel no bus histogram — so presence is a NOTE, not a FAIL. What IS
@@ -1304,9 +1365,17 @@ rm -f "$BIN" ./tmp/qa-lifecycle-state.json ./tmp/qa-ka-state.json ./tmp/qa-setti
 printf '\n'
 host_state_after=$(record_host_state)
 if [ "$host_state_before" != "$host_state_after" ]; then
-  echo "  FAIL Q2 host-state sentinel: QA touched the real host state directory!"
-  echo "    before: $host_state_before"
-  echo "    after:  $host_state_after"
+  # A change is a FAIL either way, but not necessarily QA's: a resident instance (login item, a
+  # manual ./awake) persists its own state.json and drains intents/ while QA runs. Show what moved
+  # and who might have moved it, rather than asserting a sandbox escape.
+  echo "  FAIL Q2 host-state sentinel: host state changed during QA"
+  diff <(echo "$host_state_before") <(echo "$host_state_after") | sed -n 's/^</    before:/p; s/^>/    after: /p'
+  resident=$(pgrep -U "$(id -u)" -f 'CoAwake' | tr '\n' ' ')
+  if [ -n "$resident" ]; then
+    echo "    a CoAwake instance is resident now (pid $resident) — likely its own write; re-run with it stopped to rule QA in or out"
+  else
+    echo "    no CoAwake instance resident now — if none ran during QA, a test escaped its CO_AWAKE_STATE_FILE sandbox"
+  fi
   total_fail=$((total_fail+1))
 else
   echo "  PASS Q2 host-state sentinel: host state directory untouched"

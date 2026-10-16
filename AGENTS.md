@@ -54,6 +54,7 @@ This file provides guidance to Claude Code (claude.ai/code) and all coding agent
 | **路线图** | `docs/ROADMAP.md` | 悬着的候选议题总表（候选议题 `R<n>`、排期）；只记跟踪与设计落点，不记流水账；议题落成即移出 |
 | **计划书** | `docs/PLAN-<topic>.md` | 单项特性的设计与实施草案；**主体做完蒸馏入 `docs/ARCHITECTURE.md` 后当场 `git rm` 删除**（绝不留存归档） |
 | **架构正本** | `docs/ARCHITECTURE.md` | 系统已建成架构的正本（why 与 how，不重复代码中的 what）；包含 §0 路由表、系统拓扑、子系统规约、系统边界/拒绝决策与参数基线 |
+| **用户手册** | `docs/RUNBOOK-user-manual.md` | 随系统存活；面向人（状态栏）与 Agent（`snapshot` / `status`）的使用场景、读数解读、CLI 速查与 FAQ；只讲「何时、怎么用」，机制与取舍留在 `ARCHITECTURE.md`，旗标全集以 `awake --help` 为准 |
 | **外部调研** | `docs/RESEARCH-<topic>.md` | 外部竞品与业界生态调研及实测数据（**不入 ADLC 链**，不 land、不改名、不退休，供决策参考，测量过时后清理或重测） |
 
 - **严禁新建文种**：没有 `REPORT-`、`DESIGN-`、`TODO-`、`LESSONS`、`RUNBOOK-` 或 `JOURNAL`。

@@ -4,12 +4,33 @@
   <img src="docs/media/hero.svg?v=2" alt="co-awake — a running horse in the macOS menu bar whose animation speed tracks system load" width="880">
 </p>
 
-Small macOS menu bar app that renders an animated GIF in the status bar.
-Animation speed automatically adapts to a system load source (CPU by default; also memory, DRAM bus bandwidth, GPU, network, disk, fan, battery, die temperature, or Neural Engine power — see Load source below).
+A small native macOS menu bar app with two audiences. **People** glance at an animated runner whose
+speed tracks system load (or a trace chart, or a live number), and toggle Keep Awake with one click.
+**Programs and agents** run `awake snapshot` and get one line of JSON with the machine's physical vitals
+— DRAM bus bandwidth, memory pressure, die temperature, P/E-core split, GPU, Neural Engine power, fans,
+battery — read without privileges and without touching the menu bar.
 
 Current version: **3.0.0** (see [`CHANGELOG.md`](CHANGELOG.md)).
 
 **Cover page:** [co-awake.pages.dev](https://co-awake.pages.dev)
+
+| You want to… | Read |
+|---|---|
+| Use it day to day, or have an agent use it (scenarios, menu map, reading the JSON, FAQ) | [`docs/RUNBOOK-user-manual.md`](docs/RUNBOOK-user-manual.md) |
+| Understand how it is built, why, and what it deliberately does not do | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| See what changed | [`CHANGELOG.md`](CHANGELOG.md) |
+
+## Two tracks: the menu bar is for people, `snapshot` is for programs
+
+| | People | Programs / agents |
+|---|---|---|
+| **Read the machine** | Glance at the status bar (runner GIF, trace chart, or live value); click for every reading | `awake snapshot` — one JSON line, physical units, ~0.3 s, writes nothing |
+| **Is the app up, is it holding sleep?** | The track line under the icon, the countdown beside it | `awake status` — one JSON line |
+| **Keep the Mac awake** | ⌥-click the icon, or `Keep Awake ▸` in the menu — with a battery release point and a hard 5% floor | `caffeinate -i -w <pid>` bound to the job itself; not this app |
+| **Change the look** | `Display Mode ▸`, `Runner Preset ▸`, `Selected Metric ▸` | `awake --preset … --display … --load-source …` (applied live) |
+
+Both tracks share one set of unprivileged readers (`TelemetryCore`: Mach, IOKit, IOReport, SMC). No
+root, no `pmset`, no per-process table, no network except the release-tag check.
 
 ## Feedback wanted
 
@@ -41,129 +62,61 @@ curl -fsSL https://raw.githubusercontent.com/binlecode/co-awake/main/install.sh 
 The installer clones the repo to `~/.local/share/co-awake`, compiles the binary, and
 symlinks the launcher to `~/.local/bin/awake`. Run interactively, it also asks
 whether to enable start-at-login (pass `--login` to enable it without prompting; a piped
-`curl | bash` skips the prompt). Re-running updates an existing install in place (`git pull`).
+`curl | bash` skips the prompt).
 
 - **Overrides:** `CO_AWAKE_HOME` (install dir), `BIN_DIR` (launcher symlink dir).
-- **Update:** re-run the installer.
-- **Uninstall:** run `~/.local/share/co-awake/uninstall.sh` — it tears down
-  start-at-login (if enabled), stops any running instance, and removes the launcher symlink and
-  the install dir (`--yes` to skip the delete confirmation).
+- **Update:** re-run the installer (it runs `git pull` in place), or use the in-app updater below.
+- **Uninstall:** `~/.local/share/co-awake/uninstall.sh` — tears down start-at-login, stops any
+  running instance, removes the launcher symlink and the install dir (`--yes` skips the confirmation).
 
-Already have the repo checked out? Skip the installer — see **Run Locally**.
+Already have the repo checked out? `./awake` from the repo directory works the same; to put it on your
+`PATH`, `ln -s "$PWD/awake" ~/.local/bin/awake`.
 
-## Files
-
-- `CoAwake.swift`: app source.
-- `install.sh`: one-line installer (clone + compile + symlink launcher onto `PATH`; see Install above).
-- `uninstall.sh`: reverses `install.sh` (LaunchAgent, running instance, symlink, install dir).
-- `LICENSE.md`: MIT license (covers the source code; the bundled GIFs are third-party — see Assets & attribution).
-- `awake`: launcher script.
-- `scripts/install-login-item.sh` / `scripts/uninstall-login-item.sh`: optional start-at-login setup (see below).
-- `CHANGELOG.md`: release history (Keep a Changelog + semver).
-- `gifs/running-dog-white.gif`: built-in white dog preset (transparent).
-- `gifs/running-dog-black.gif`: built-in black dog preset (transparent).
-- `gifs/running-horse-black.gif`: built-in black horse preset (Pinterest silhouette, transparent).
-- `gifs/running-horse-white.gif`: built-in white horse preset (transparent).
-- `gifs/chihiro-walk.gif`: built-in walking Chihiro preset (side-profile walk cycle, color, transparent).
-- `gifs/chihiro-walk-white.gif`: built-in walking Chihiro preset (white silhouette, transparent).
-- `gifs/chihiro-walk-black.gif`: built-in walking Chihiro preset (black silhouette, transparent).
-- `gifs/totoro.gif`: built-in Totoro preset (from Giphy).
-- `gifs/totoro-group-white.gif`: built-in white Totoro group preset (transparent).
-- `gifs/totoro-group-black.gif`: built-in black Totoro group preset (transparent).
-- `gifs/totoro-white.gif`: built-in white Totoro preset (transparent).
-- `gifs/totoro-black.gif`: built-in black Totoro preset (transparent).
-- `gifs/presets.json`: preset manifest — the single source of truth for each built-in preset's keyword,
-  menu title, GIF file, and auto speed range (and the default preset). Edit this to add or
-  tweak presets; no Swift change needed. (Width is not configured here — it's derived from each GIF's
-  aspect ratio at runtime.)
-
-## Run Locally
-
-From the repository directory:
+## Quick start
 
 ```bash
-./awake
-```
-
-This uses the built-in `horse-white` preset. The menu-bar item sizes itself to the GIF's aspect ratio
-at menu-bar height (a wide preset like `totoro-group-*` gets a wide item; a tall/narrow one gets a
-narrow one) — width is automatic and not configurable.
-It launches detached by default, so it keeps running even if the host shell exits.
-
-To run attached to the current shell session:
-
-```bash
-./awake --foreground
-```
-
-Notes:
-
-- **One instance, changed in place.** Only one instance runs at a time. Running the command again with settings — `--preset`, `--display`, `--load-source`, `--keep-awake`, `--keep-awake-pid`, `--battery-threshold` — applies them to the running instance instead of starting another; with no settings it does nothing. Launch-only flags (`--speed-multiplier`, `--show-all-sources`, `--no-update-check`, `--foreground`) are refused while it runs. `--extra` starts an additional instance anyway.
-- **One line of JSON back.** Every command answers with one line: `{"action":"started"|"forwarded"|"unchanged","pid":N}` for a start, and the query commands below print theirs.
-- **Detached logs.** A detached launch writes output to `/tmp/co-awake.log` (override with the `CO_AWAKE_LOG_FILE` environment variable). Use `--foreground` to send output straight to your terminal instead.
-
-## Global command
-
-The installer symlinks the launcher onto your `PATH` (at `~/.local/bin/awake`), so you
-can launch it as **`awake`** from any folder:
-
-```bash
-awake --preset dog-black
-```
-
-Running from a cloned repo instead? Symlink it yourself:
-
-```bash
-ln -s "$PWD/awake" ~/.local/bin/awake
+awake                                    # start in the menu bar (detached; default preset horse-white)
+awake --preset dog-black --display value # change the look — live, if it is already running
+awake snapshot                           # one JSON line of hardware readings, then exit
+awake status                             # is an instance up, is it holding the Mac awake
+awake presets                            # the built-in preset keys
+awake --help                             # the one full reference
 ```
 
 The first argument is a command; leave it out and it means `start`:
 
 | Command | Does |
 |---|---|
-| `awake [start] [flags]` | Start in the menu bar, or apply the flags to the instance already running |
-| `awake status` | One JSON line: is an instance up, and is it holding the Mac awake ([more](#ask-whether-one-is-already-running-status)) |
-| `awake snapshot` | One JSON line with every sensor reading, without touching the menu bar ([more](#read-the-sensors-from-a-script-snapshot)) |
-| `awake presets` | One JSON line listing the built-in presets |
-| `awake build` | Build the binary if the source is newer, then exit without launching — safe while the app runs; the in-app updater uses it so a restart doesn't wait on a compile |
+| `awake [start] [flags]` | Start in the menu bar, or apply the flags to the instance already running. Replies `{"action":"started"\|"forwarded"\|"unchanged","pid":N}` |
+| `awake snapshot` | Every hardware reading in physical units, without touching the menu bar |
+| `awake status` | Is an instance up, and is it holding the Mac awake |
+| `awake presets` | The built-in presets (key, title) and the default |
+| `awake build` | Compile if the source is newer, then exit; safe while the app runs |
 
-`awake --help` is the full reference.
+- **One instance, changed in place.** Settings — `--preset`, `--display`, `--load-source`,
+  `--keep-awake`, `--keep-awake-pid`, `--battery-threshold` — sent to a running instance apply live.
+  Launch-only flags (`--speed-multiplier`, `--show-all-sources`, `--no-update-check`, `--foreground`)
+  are refused while it runs. `--extra` starts an additional instance that never writes the state file.
+- **Logs.** A detached launch writes to `/tmp/co-awake.log` (override with `CO_AWAKE_LOG_FILE`);
+  `--foreground` keeps output in your terminal.
+- **Stop.** Menu → `Exit`, or `pkill -f CoAwake`.
 
-## Start at login (personal, optional)
+## What it shows
 
-Auto-start via a **per-user LaunchAgent** — no root, no installer, no `.app` bundle, no signing.
+**One representation at a time** (`--display`, or `Display Mode ▸`): `gif` — the runner, faster under
+load (default); `trace` — a 12-slot monochrome sparkline; `value` — a live reading like `CPU 15%` or
+`NET ↓3.4 ↑0.1`. The item's width is fixed per mode, so changing digits never shift the menu bar.
 
-```bash
-./scripts/install-login-item.sh                              # start at login (defaults to horse-white)
-./scripts/install-login-item.sh --preset dog-black --load-source memory   # bake in launcher args
-./scripts/uninstall-login-item.sh                            # remove it again
-```
+**Ten load sources** (`--load-source`, or `Selected Metric ▸`) choose what drives the animation:
+`cpu` (default, with a P/E-cluster split), `memory` (with swap), `bandwidth` (DRAM bus GB/s — usually
+the ceiling for local model inference), `gpu` (with a Renderer/Tiler split), `network`, `disk`, `fan`,
+`battery` (discharge current), `temperature` (hottest die sensor, on a fixed 30–100 °C scale), and
+`ane` (Neural Engine watts — the load CPU and GPU can't see). A source this Mac can't read is hidden
+and falls back to `cpu`. How each is measured: [ARCHITECTURE § 4](docs/ARCHITECTURE.md#4-hardware-telemetry--scaling-subsystems).
 
-Install starts it immediately (no logout needed) and on every login; with no args it uses the
-manifest's default preset (`horse-white`). Choosing **Exit** from the menu quits it until the next
-login (there is no `KeepAlive`). It shows up in **System Settings → General → Login Items → "Allow in
-the Background"** — not the top "Open at Login" list, which is only for `.app`-style login items.
-
-Uninstall is the exact inverse and leaves no residue (deregisters the agent, deletes the plist + log).
-
-You can also toggle it from the menu: **"Start at Login"** — no terminal needed.
-
-### Upgrading vs. reconfiguring the login item
-
-These are **independent** — a new release does *not* require a reinstall, and a reinstall is *only*
-for changing the baked-in args:
-
-- **Pick up a new release** — the LaunchAgent runs the launcher script (not a fixed binary), which
-  recompiles `CoAwake.swift` whenever it changes. So a new version is picked up the next
-  time the agent starts — just restart it (args are preserved, nothing to reinstall):
-  ```bash
-  launchctl kickstart -k "gui/$(id -u)/com.binle.coawake"   # or simply log out and back in
-  ```
-- **Change the preset or load source** — this is the *only* reason to reinstall. Re-run the installer
-  with the new args; it re-bakes the plist and restarts:
-  ```bash
-  ./scripts/install-login-item.sh --preset dog-black --load-source fan
-  ```
+**The dropdown** is a live dashboard of every available reading, plus Keep Awake, appearance, start
+at login and updates. Its full map and every Keep Awake state are in the
+[user manual](docs/RUNBOOK-user-manual.md#菜单地图点击状态栏图标).
 
 ## Built-in presets
 
@@ -173,296 +126,97 @@ for changing the baked-in args:
 > [Assets & attribution](#assets--attribution) before forking, packaging, or redistributing;
 > [any GIF of your own](#use-a-custom-gif) works just as well.
 
-```bash
-./awake presets                # the built-in keys, from gifs/presets.json
-./awake --preset totoro        # switch — live, if it is already running
-```
-
 Horse (the default, `horse-white`), dog, Chihiro and Totoro, most in white and black silhouettes for
-light and dark menu bars; the menu's **Presets** submenu shows them all. `gifs/presets.json` is the
-list — the CLI and the help read it rather than keeping a copy.
+light and dark menu bars. `gifs/presets.json` is the list — `awake presets`, the help and the menu all
+read it, so adding a preset is a GIF plus one manifest entry, no Swift change.
 
-## Use a custom GIF
-
-```bash
-./awake --preset /absolute/path/to/your.gif
-```
-
-Or:
+### Use a custom GIF
 
 ```bash
-CO_AWAKE_PRESET=/absolute/path/to/your.gif ./awake
+awake --preset /absolute/path/to/your.gif      # or CO_AWAKE_PRESET=/absolute/path/to/your.gif
 ```
 
-## Width
-
-Width is automatic and not configurable: the menu-bar item sizes itself to the loaded GIF's aspect
-ratio at menu-bar height (clamped to a sane maximum). A wide GIF gets a wide item; a tall/narrow one
-gets a narrow item. The current width is shown read-only in the menu (see below).
-
-## Fixed speed override
-
-```bash
-./awake --speed-multiplier 1.2
-```
-
-## Status-bar display mode (GIF / Trace Chart / Live Value)
-
-```bash
-./awake --display gif        # animated runner GIF (default)
-./awake --display trace      # compact post-modern load chart (or --display chart)
-./awake --display value      # live reading of the active source, e.g. "CPU 15%"
-```
-
-`--display` chooses the single status-bar representation:
-
-- `--display gif` (the default) shows the animated creature.
-- `--display trace` (or `--display chart`) shows the active source's compact 12-slot post-modern trace chart (sparkline).
-- `--display value` shows the active source's live reading, refreshed on the 2s tick — `CPU 15%`,
-  `MEM 63%`, `NET ↓3.4 ↑0.1`, `DSK R12 W4`, `GPU 30%`, `FAN 45%`, `BAT 88%` (MB/s implied for the rate
-  sources). The full, fully-labeled figures still live in the dropdown; this is the at-a-glance number.
-
-**Single representation, zero clutter.** Exactly one visual form appears in the menu bar at a time,
-aligning with the minimalist philosophy and eliminating dual-slot scattering and lateral jitter.
-Also settable via `CO_AWAKE_DISPLAY`, and switchable at runtime from the menu's **Presets ▸**
-submenu (`Trace Chart`, `Live Value`, or any runner GIF preset).
-
-**The item doesn't jitter.** Its width is fixed for the mode and shape on show — sized once for the widest reading
-that shape can produce (`CPU 100%`, `NET ↓999.9 ↑999.9`), with the number right-aligned in monospaced
-digits. When windowed Keep Awake is armed (e.g. `29:58`), the countdown timer appears cleanly beside the
-element without lateral shift.
-
-Whenever the track line under the icon is tinted, the item takes the same tint, so the indicator reads as one:
-solid when this app is holding the Mac awake, faded when something else is (a `caffeinate` you
-started, another utility), and fainter still when this app is armed but a low battery or a hot machine has
-released its hold for now. Brightness tracks how much of a hold there is — only this app's own hold is one
-its `Off` row can release.
-
-## The menu (live dashboard)
-
-Clicking the status-bar creature opens a menu that doubles as a live readout of the active load
-source, refreshed while it's open:
-
-- **Source list** — unified list of every available telemetry monitor (`CPU`, `Memory`, `GPU`, `Network`, `Disk`, `Fan`, `Battery`, `Temperature`, `ANE`, `Memory Bandwidth`), each displaying its live readout. Hovering or clicking any source opens its submenu offering three display representations: **Runner GIF**, **Trace Chart**, or **Live Value**.
-- **Animation & Width status** below — speed multiplier, self-throttling reason (when active), and status item width.
-- A **Keep Awake** submenu, a **Battery Threshold** submenu, a **Presets** submenu, and a **Start at Login** toggle.
-
-### Battery health, cycles, and capacity
-
-On a Mac with a battery, the menu also reports what the battery has been through — not just what it's
-doing right now. The `Battery` row gains `100% health · 113 cycles`, the state row names the condition
-and the capacity behind it (`Normal · 8478/8579 mAh`), and hovering either row gives the full
-breakdown: health and condition, cycles against the design cycle count, maximum capacity in mAh and as
-a percentage of design, and the raw measured capacity. `Service Recommended` appears once health falls
-below 80% or the hardware reports a permanent failure — the same condition macOS itself surfaces.
-
-Two things make this different from every other reading here. It is read from `AppleSmartBattery` in
-the IORegistry with **no privileges and no helper**, and it is **never polled**: health and cycle count
-move over months, so reading them on a 2-second timer would be pure waste. The read happens when you
-open the menu and the result is dropped when you close it — a strict exception to the sampling loop,
-not a tenth load source. Nothing about the animation is driven by it.
-
-Desktop Macs with no battery are unaffected: the reader finds no `AppleSmartBattery` service, returns
-nothing, and the menu reads exactly as it did before.
-
-## Load source (what drives the animation)
-
-```bash
-./awake --load-source gpu
-CO_AWAKE_LOAD_SOURCE=network ./awake
-```
-
-`--load-source` (or the `CO_AWAKE_LOAD_SOURCE` env var) selects which system reader
-drives the animation speed: `cpu` (default), `memory`, `bandwidth`, `gpu`, `network`, `disk`, `fan`, `battery`, `temperature`, or `ane`. Unknown values —
-or a source with no readable hardware on this machine — fall back to `cpu` (unavailable sources are
-hidden in the menu). It can also be switched live by selecting any source and its display option in the menu. All readers are
-unprivileged (no `sudo`); the app only ever *reads* load.
-
-- **cpu** (default): CPU usage across all cores. The menu row also splits it by cluster — `P 12% · E 78%` — because four saturated efficiency cores and four saturated performance cores both read 35%, and they are not the same machine state.
-- **memory**: memory in use, combined with swap activity.
-- **bandwidth**: DRAM bus throughput, in GB/s — how hard the memory *bus* is working, which is a different question from how full the memory is. During local model inference the bus is usually the ceiling: a Mac can sit at 40% RAM with the bus saturated, and no other reader here would show it. Read from the memory controller's own bandwidth histogram, so it is a measured rate rather than one derived from RAM usage, and normalized against the same adaptive ceiling the other rate sources use (an M4 Max measures 16 GB/s idle, 46–78 under ordinary desktop work, 335 under a heavy streaming load). Unavailable on Intel Macs and anywhere the bus histogram is absent, which fall back to `cpu`.
-- **gpu**: GPU utilization. The menu row also splits it into the two pipeline halves — `Renderer 46% · Tiler 19%` — read from the same place the device figure comes from.
-- **network**: total interface throughput (rx+tx, loopback excluded).
-- **disk**: total block-device throughput (read+write across all drives).
-- **fan**: fan speed as a thermal/cooling signal (RPM as a fraction of the fan's max, averaged across fans — one fan spinning up doesn't dominate while the rest of the system is quiet). A lagging signal that trails actual work and only ramps under sustained thermal load, but idle fans still spin — so it keeps some visible motion (a genuinely stopped fan still crawls at the preset's minimum speed). Unavailable on fanless Macs (e.g. MacBook Air, which have zero fans), which fall back to `cpu`.
-- **battery**: discharge current (instantaneous draw, in mA) while on battery — a fast drain animates faster; on AC power the draw is zero, so the animation idles. Since every machine's draw ceiling differs, the current is normalized against the same adaptive ceiling the byte-rate sources use. The menu also shows the charge level. Unavailable on desktop Macs with no battery, which fall back to `cpu`.
-- **temperature**: die temperature — the *leading* thermal signal, where fan speed is the lagging one (the die heats in milliseconds; the fans answering it ramp over seconds). Read straight off the performance-core temperature sensors and mapped on an absolute 30 °C → 100 °C scale, so a given animation speed means the same temperature on every Mac rather than being rescaled to your machine's recent range. The driver is the *hottest* sensor, not the average — throttling responds to the hottest die, and averaging a loaded core cluster against an idle one hides the event worth watching; the menu shows the full spread it came from. A Mac that cools well may never reach the top of the speed range, which is the honest reading. **When macOS itself reports serious or critical thermal pressure, the row says `Thermal Throttling` where it would otherwise count sensors** — the die reading alone can't tell you whether the kernel has started clocking the machine down, which is the thing that number is watched for. That is the kernel's doing, distinct from this app slowing its own animation (which stays on its own line). No percentage comes with it: Apple Silicon manages clocks on-die and publishes a pressure level, not a frequency cap, and inventing a number from a level would be a reading nothing measured. Unavailable where no sensor answers (typically VMs), which fall back to `cpu`.
-- **ane**: Apple Neural Engine power draw, in watts — the one signal CPU and GPU cannot show you. When on-device inference runs on the NPU (Apple Intelligence, CoreML, MLX's ANE backend, Vision), CPU and GPU utilization stay near idle, so every other source reports a quiet machine while it is working hard. A power-gated NPU reads an exact 0 W and the animation idles; real inference measures single-digit watts and is normalized against the same adaptive ceiling the other rate sources use. This is the only reader built on a private API (`IOReport`, the unprivileged interface `powermetrics` reads energy from — still no root, still read-only), and also the most expensive: roughly 0.3 percentage points more CPU than the other readers, paid only while it is the active source. Unavailable on Intel Macs and anywhere the energy rail is absent, which fall back to `cpu`.
-
-Without `--speed-multiplier`, animation speed adapts to the selected load source. Per-preset speed
-ranges are defined in `gifs/presets.json`; edit that file to change a range or add a preset (the app
-loads it at startup). Switching source changes *which* load value is mapped, not the preset's range.
-
-### Telemetry sources & display options
-
-The menu provides a unified list of every available reader. Each row shows that reader's live readout and expands into a submenu with three representations:
-
-- **Runner GIF**: the animated creature whose speed dynamically scales with this source's load.
-- **Trace Chart**: a compact 12-slot sparkline chart rendered in the menu bar.
-- **Live Value**: the monospaced live numeric reading rendered in the menu bar.
-
-Picking any option instantly switches both the active telemetry driver and the status bar representation. By default, inactive readers are only sampled while the menu is open (so the indicator adds zero extra load when closed). Passing `--show-all-sources` (or `CO_AWAKE_SHOW_ALL=1`) keeps all readers polled continuously.
-
-> How each source is measured, in brief: the percentage-style sources (CPU, GPU, fan) are
-> direct unprivileged reads (CPU smoothed by a short moving average); memory combines the used
-> fraction with live swap throughput; the byte-rate sources (network, disk, swap) plus battery
-> discharge current are normalized against an adaptive ceiling that tracks your machine's recent peaks (the same
-> approach `btop` uses), so the animation stays meaningful whatever your hardware's actual maximum
-> throughput is. Under Low Power Mode, thermal, or memory pressure the app caps its own animation
-> speed at half the preset's range.
+The item sizes itself to the GIF's aspect ratio at menu-bar height; width is not configurable.
+`--speed-multiplier 1.2` fixes the speed instead of following load.
 
 ## Read the sensors from a script (`snapshot`)
 
 ```bash
-./awake snapshot
-{"v":1,"cpu_pct":14.2,"cpu_p_pct":9.8,"cpu_e_pct":27.4,"mem_pct":41.0,"swap_mibs":0.00,"bw_gbps":58.3,"gpu_pct":28.0,"gpu_rend_pct":26.0,"gpu_tiler_pct":11.0,"net_rx_mibs":1.40,"net_tx_mibs":0.20,"disk_read_mibs":0.00,"disk_write_mibs":3.10,"fan_rpm":[2160],"battery_pct":96.0,"battery_a":0.80,"temp_c":78.0,"thermal":"nominal","ane_w":0.00}
+$ awake snapshot
+{"v":1,"power_source":"ac","memory_pressure":"normal","cpu_pct":12.3,"cpu_p_pct":3.4,"cpu_e_pct":39.5,"cpu_p_cores":12,"cpu_e_cores":4,"mem_pct":34.1,"swap_mibs":0.00,"bw_gbps":28.3,"gpu_pct":33.0,"gpu_rend_pct":33.0,"gpu_tiler_pct":15.0,"net_rx_mibs":0.00,"net_tx_mibs":0.00,"disk_read_mibs":0.00,"disk_write_mibs":0.00,"fan_rpm":[1332,1459],"battery_pct":80.0,"battery_health_pct":100.0,"battery_cycles":118,"temp_c":56.0,"thermal":"nominal","ane_w":0.00}
+$ awake snapshot | jq '{bw_gbps, memory_pressure, thermal}'
 ```
 
-The same readers the menu bar uses, printed as one line of JSON, then exit — for a script, a
-status line, or an agent deciding whether this machine has the thermal and battery headroom for a long
-build. No menu bar, no window, no state file, and nothing to install or leave running:
+- **Units are in the key name** — `_pct` %, `_mibs` MiB/s, `_gbps` GB/s, `_c` °C, `_w` W, `_a` A;
+  `fan_rpm` is one entry per fan. `v` is the only key always present; read by key, ignore unknown ones.
+- **An absent key means unknown.** A reading the machine can't give is left out — never `null`, never
+  a `0` or a reassuring default. `memory_pressure`, `power_source`, `thermal` and `temp_c` appear only
+  when macOS actually stated them; don't treat their absence as "fine".
+- **No side effects.** No menu bar, no state file, no compile; safe beside a running instance and in
+  parallel with itself. It must be the only argument. About 0.3 s, because rates are counter deltas
+  over a sampling window. Exit `2` means the binary isn't built yet — run `awake build` once.
 
-```bash
-./awake snapshot | jq -r '"\(.temp_c) °C, \(.thermal)"'
-```
-
-- **Physical units, named with them.** `_pct` is a percentage, `_mibs` is MiB/s, `_gbps` is GB/s,
-  `_c` is °C, `_w` is watts, `_a` is amps, `fan_rpm` is a list with one entry per fan.
-- **A reading the machine can't give you is an absent key** — never `null`, never a `0` standing in
-  for "no sensor". So `battery_pct` is missing on a desktop, `fan_rpm` on a fanless Mac, and the
-  cluster and pipeline splits (`cpu_p_pct`/`cpu_e_pct`, `gpu_rend_pct`/`gpu_tiler_pct`) on hardware
-  that does not publish them — each pair arrives whole or not at all. `v` is the
-  schema version and is the only field always present; new fields may be added, so read by key.
-- **It must be the only argument** (everything else configures a GUI this path never builds), and it
-  is safe to run beside a running instance, or several at once — it writes nothing and locks nothing.
-- **Takes about 0.3 s.** Throughput readings are counter deltas, so it samples, waits, and samples
-  again; that window is nearly the whole runtime.
-- Needs the binary built (`./awake build` once, if you have never launched it);
-  it deliberately won't compile one for you, so a snapshot never turns into a 30-second build.
+Full schema and the absent-when table: [ARCHITECTURE § 4.7](docs/ARCHITECTURE.md#47-telemetry-core--the-snapshot-command).
+How an agent should read it, scenario by scenario: [the user manual](docs/RUNBOOK-user-manual.md).
 
 ## Ask whether one is already running (`status`)
 
 ```bash
-./awake status
+$ awake status
 {"running":true,"pid":1598,"keep_awake":{"active":true,"remaining_s":3540}}
 ```
 
-`snapshot` answers for the machine; this answers for the app. It's the question a script has before
-it assumes the Mac will still be awake in an hour. (It is not needed before starting one: `start`
-already does the right thing either way.)
+`snapshot` answers for the machine; this answers for the app. Nothing running is `{"running":false}`
+and still exit 0 (exit 1 only means the question wasn't understood). `keep_awake` reports whether Keep Awake
+was armed (user intent; `remaining_s` for a timed window). Read-only. Details: [ARCHITECTURE § 8.3](docs/ARCHITECTURE.md#83-the-status-query).
+
+## Keep Awake
+
+For a person stepping away. ⌥-click the menu bar item to toggle it, or pick a window from
+`Keep Awake ▸` (30 min to 8 h, custom up to 24 h, until turned off, or until a process exits). From the
+command line:
 
 ```bash
-./awake status | jq -e '.keep_awake.active' >/dev/null || echo "nothing is holding the Mac awake"
+awake --keep-awake 4h                  # a window (a unit is required: 30m, 2h, 1h30m; max 24h)
+awake --keep-awake on                  # until turned off
+long-job.sh & awake --keep-awake-pid $!   # until that job exits, visible in the menu bar
+awake --battery-threshold 10           # release at 10% on battery instead of 20% (6–100, or off)
 ```
 
-- **Nothing running is an answer, not an error** — `{"running":false}`, and still exit 0. Exit 1 means
-  the question wasn't understood (it must be the only argument), never that the answer was "no".
-- **`keep_awake` only appears with a live instance.** The saved intent outlives the process that wrote
-  it, so reporting it with nobody up would claim a hold nothing is holding.
-- **`remaining_s` only appears for a timed window.** A hold that runs until you turn it off, or until
-  another process exits, has no remaining time — so the key is absent rather than `0`.
-- **Read-only.** It looks at the process table and reads the state file; it writes neither, so it is
-  safe beside a running instance and in parallel with itself.
+It holds sleep with `caffeinate -di -w <app pid>`, so the hold dies with the app. It pauses on battery
+below the release point (default 20%) or under serious thermal pressure, resumes when that clears, and
+**always releases at 5% battery** — no flag, menu action or saved state gets past that floor. A timed
+window survives a relaunch or reboot as its remaining time; an indefinite or process-bound hold does
+not. Every state and rule: [user manual](docs/RUNBOOK-user-manual.md); mechanism: [ARCHITECTURE § 7](docs/ARCHITECTURE.md#7-integrated-sleep-prevention-sleeppreventer--assertion-monitor).
 
-## Keep Awake from the command line (`--keep-awake`)
+**Unattended agent jobs don't use Keep Awake** — they bind a hold to the job with
+`caffeinate -i -w <pid>`, which needs no resident app and releases when the job exits (see the
+manual's scenario 3 for the `-i` vs `-di` tradeoff).
+
+## Start at login
+
+A per-user LaunchAgent — no root, no `.app` bundle, no signing. Toggle **Start at Login** in the menu,
+or from the shell:
 
 ```bash
-./awake --keep-awake 4h        # arm a 4-hour window — at startup, or live if it is running
-./awake --keep-awake on        # until turned off
-CO_AWAKE_KEEP_AWAKE=90m ./awake
+./scripts/install-login-item.sh                                         # default preset
+./scripts/install-login-item.sh --preset dog-black --load-source memory # bake in launcher args
+./scripts/uninstall-login-item.sh                                       # remove; leaves no residue
 ```
 
-`--keep-awake` (or `CO_AWAKE_KEEP_AWAKE`) arms sleep prevention as the app starts — or, with the
-app already running, on that instance — so a long unattended run can be scripted instead of clicked. It takes `off` (the default), `on` /
-`indefinite`, or a duration — **a unit is required**: `30m`, `2h`, `1h30m`, `90s`, up to 24 hours.
-A bare number is rejected rather than guessed at, since minutes and hours are both plausible readings
-and picking wrong is a 60× error in how long your Mac stays awake. At launch an unrecognized value warns
-on stderr and launches with Keep Awake off; it never fails the launch, because this value can be baked
-into a login item. Sent to a running instance it is refused instead (exit 1), and the instance is left
-as it was:
+It appears under **System Settings → General → Login Items → "Allow in the Background"**. `Exit` from
+the menu quits it until the next login (no `KeepAlive`). A new release is picked up on the next start
+(`launchctl kickstart -k "gui/$(id -u)/com.binle.coawake"`); re-run the install script only to change
+the baked-in args.
 
-```bash
-./scripts/install-login-item.sh --keep-awake 4h
-```
+## Updates
 
-### Waiting for a process instead of a clock (`--keep-awake-pid`)
-
-```bash
-long-build.sh & ./awake --keep-awake-pid $!   # hold until that job exits
-CO_AWAKE_KEEP_AWAKE_PID=41293 ./awake
-```
-
-A duration is a *time* promise, not a *task* promise, and for an unattended job that is the whole
-problem: `2h` and `4h` are both guesses, and the one that ends early is the one that costs you the
-run. `--keep-awake-pid <pid>` (or `CO_AWAKE_KEEP_AWAKE_PID`) holds the Mac awake until that
-process exits and then releases on its own — no window to pick, and nothing left holding sleep after
-the job is done.
-
-**From the menu, on an instance already running:** `Keep Awake ▸ Until a process exits…`, which takes
-a pid *or* a name — type `claude` and it binds to the newest process of that name you are running, so
-you don't have to `pgrep` for a number first. Whichever way it was armed, the hold names its subject
-wherever it is shown: the `Keep Awake` row reads `Keep Awake: claude (41293)` and the submenu says
-`until claude (41293) exits`.
-
-Everything else about Keep Awake is unchanged: a bound hold still pauses on low battery and still
-releases at the 5% floor, and it says why in the same place. Two deliberate limits — a pid that is
-already gone warns on stderr and launches with Keep Awake off (the work is finished, so there is
-nothing to wait for), and a binding is **never resumed after a reboot**, because pids are recycled and
-a restored one could bind to something unrelated. It does survive the in-app update restart, which
-doesn't reboot the Mac. If you pass both `--keep-awake` and `--keep-awake-pid`, the pid wins.
-
-### The battery release point (`--battery-threshold`)
-
-```bash
-./awake --keep-awake 8h --battery-threshold 10   # release at 10% instead of 20%
-./awake --keep-awake on --battery-threshold off  # never release on charge alone
-CO_AWAKE_BATTERY_THRESHOLD=10 ./awake
-```
-
-Also settable from the menu: `Battery Threshold` offers 10 / 15 / 20 / 30%, `Never`, and a
-`Custom…` percent prompt, with the current value in the menu row's title. A change there applies
-immediately — a Keep Awake window that is already running picks up the new release point without
-waiting for the next battery event.
-
-Keep Awake releases at 20% on battery by default. `--battery-threshold` (or
-`CO_AWAKE_BATTERY_THRESHOLD`) moves that point: a **whole percent** — `20` or `20%`, from 6
-to 100 — or `off`, which never releases on charge alone. A decimal like `0.20` is refused rather than
-guessed at, for the reason a bare duration is: it reads as 0.2% under one convention and 20% under the
-other. Out-of-range values are clamped and unrecognized ones fall back to the 20% default, both with a
-warning on stderr and never a failed launch, since this too can be baked into a login item.
-
-The threshold **persists across launches**: whatever it was last set to comes back, so a plain
-`./awake` keeps your release point instead of reverting to 20%. That matters most for
-`off` — a forgotten `off` would silently reinstate a policy you turned off. Passing the flag or the env
-var still wins over the saved value, so a login item can pin one threshold without disturbing it.
-
-**Below 5% on battery the Mac sleeps regardless.** That floor is not configurable and is checked
-first, so it holds whatever the threshold is set to — including `off`. It's also why the minimum is
-6% rather than 1%: a threshold beneath the floor would be a setting that does nothing.
-
-This relocates the cliff; it doesn't remove it. Turning Keep Awake on from the menu while already
-below the threshold still overrides that pause for the session (see the menu section above).
-
-**This is launch-time arming, not remote control.** The launcher allows one instance, so running the
-command again while the app is up won't re-arm it — the second invocation is refused. To change the
-window on a running app, use the menu (or `pkill -f CoAwake` and relaunch).
-
-**Persistence.** Keep Awake state is saved to
-`~/Library/Application Support/co-awake/state.json` and restored on the next launch, so a
-reboot in the middle of an overnight window doesn't silently drop it. What's restored:
-
-| Saved | On the next launch |
-|---|---|
-| A window still running | Resumed with the **time remaining**, not a fresh window |
-| A window that already elapsed | Not restored — the Mac is free to sleep |
-| Keep Awake on with **no** window (indefinite) | **Not** restored — see below |
-| The track-line color | Always restored (it's cosmetic) |
-
-A saved *indefinite* window is deliberately not resumed. It has no stopping condition, so a stale
-flag would keep the Mac awake after every reboot until someone noticed the menu bar; a bounded window
-is self-limiting and is the case that actually hurts. Passing `--keep-awake` — **including
-`--keep-awake off`** — overrides whatever was saved. If the state file is missing, unreadable, or
-corrupt, the app launches normally with Keep Awake off; it is never a startup error.
+On launch the app compares your checkout's highest release tag (`git ls-remote --tags origin 'v*'`)
+with its own version — **the only network access it makes**, once per launch, failing silently. A newer
+tag adds `Update available: vX.Y.Z` to the menu. Applying it is always a deliberate click and confirm:
+`git pull --ff-only` (never `--force`), compile while the app keeps running, then **Restart**. Your
+Keep Awake window, display mode, battery threshold and tint carry over. Disable the check with
+`--no-update-check` or `CO_AWAKE_UPDATE_CHECK=0`.
 
 ## Resource cost
 
@@ -470,89 +224,20 @@ co-awake is built to stay out of the way of the load it visualizes. Measured on 
 Silicon at 2× Retina — your numbers vary with Mac model, menu-bar height, display refresh rate, the
 active preset, and the current load level:
 
-- **CPU:** ~0.4–0.9% of one core while the icon is animating and visible; **0% when hidden** (the game
-  loop stops when the item is occluded by the notch, a full-screen app, or an inactive Space). Usage
-  scales with the animation rate — lower at light load — and is capped at half speed under Low Power
-  Mode / thermal / memory pressure. The system **Reduce Motion**
-  accessibility setting, which the app honors, stops the animation entirely: the icon holds its
-  current frame and the status bar temporarily shows the live value instead.
-- **Memory:** ~10 MB at launch, ~20–24 MB once the menu (with its live load-history graph) has been
-  opened — essentially the AppKit framework floor for a menu-bar app.
+- **CPU:** ~0.4–0.9% of one core while the icon is animating and visible; **0% when hidden** (the
+  game loop stops when the item is occluded by the notch, a full-screen app, or an inactive Space).
+  Capped at half speed under Low Power Mode / thermal / memory pressure. With **Reduce Motion** on,
+  the animation stops and the status bar shows the live value instead.
+- **Memory:** ~10 MB at launch, ~20–24 MB once the menu has been opened — essentially the AppKit
+  floor for a menu-bar app.
 
-Frames are drawn by swapping a `CALayer`'s contents (a pre-rasterized `CGImage`), not by re-setting the
-status button's image every frame — which avoids a per-frame Auto Layout pass and keeps steady-state
-CPU low. Reproduce it:
+Reproduce it:
 
 ```bash
-./awake                                    # start (detached)
-PID=$(pgrep -U "$(id -u)" -f '/CoAwake( |$)')   # -U: your instance, not another account's
+PID=$(pgrep -U "$(id -u)" -f '/CoAwake( |$)')
 top -pid "$PID" -l 6 -s 1 -stats pid,command,cpu,mem     # CPU + memory
 footprint -p "$PID"                                      # phys_footprint (true memory)
 ```
-
-## Help
-
-```bash
-./awake --help
-```
-
-## Stop
-
-```bash
-pkill -f 'CoAwake'
-```
-
-If a detached instance won't stop or a launch silently fails, check `/tmp/co-awake.log` (or `$CO_AWAKE_LOG_FILE` if set) first.
-
-## Menu actions
-
-Click the menu bar item — the creature, trace chart, or value slot — to open:
-
-- **Unified Source List** (`CPU`, `Memory`, `GPU`, `Network`, `Disk`, `Fan`, `Battery`, `Temperature`, `ANE`, `Memory Bandwidth`): each available reader displays its live metrics (e.g. `CPU Usage: 14.2% · P 18% · E 6%`, `Memory: 64.0% (10.2 GB)`, `Battery: 85% · AC · 100% health · 113 cycles`). Clicking any row immediately switches the active telemetry monitor driving the status item (marked with `✓`). No submenus.
-- `Load Avg (1/5/15m)` — 1, 5, and 15-minute system load averages.
-- `Speed Multiplier` (shows the active load source and mode; a separate `Slowing animation — <cause>` line appears only when a self-throttle condition is active, naming the cause: thermal throttling, Low Power Mode, or memory pressure)
-- `Width` (read-only: shows the item width in points and the aspect ratio; not configurable)
-- `Battery Threshold` (submenu) -> `10%` / `15%` / `20%` / `30%` / `Never` / `Custom…` (any whole percent from 6 to 100). The charge at which Keep Awake stops holding the Mac awake on battery; 20% by default, and the root menu title shows the current setting. `Never` means it never releases on charge alone — **below 5% the Mac still sleeps regardless**, so that is not a way to run the battery flat. A change takes effect immediately, including on a window that is already armed. **Remembered across relaunches**, and settable at launch via [`--battery-threshold`](#the-battery-release-point---battery-threshold) / `CO_AWAKE_BATTERY_THRESHOLD`, which wins over the saved value for that run.
-- `Start at Login` — toggles launchd user LaunchAgent.
-- `Keep Awake` (submenu) — keeps the Mac awake while the app runs by spawning `caffeinate -di -w <pid>` (prevents both display and idle system sleep — an idle-only assertion is unreliable on modern macOS, where the system follows the display into sleep). Bound to the app's PID, so it's reaped automatically on crash/quit. Auto-disengages on low battery (≤20% on battery by default — movable with [`--battery-threshold`](#the-battery-release-point---battery-threshold)) or serious/critical thermal state, and re-engages when the condition clears. A thin track line along the icon's bottom edge shows while it's actively keeping the Mac awake, and in Live Value or Trace Chart mode the item wears the same tint for as long as it runs. **When it's paused, it says so without you opening anything:** the line stays, dimmed further — armed but not currently holding — so a window that released itself overnight doesn't look like one you never switched on. In the menu the `Keep Awake` row reads `(paused)` and the submenu tells you why — `paused — battery low (15%)`, `paused — battery critical (4%)`, or `paused — Mac is too warm`. **Turning Keep Awake on from the menu while the battery is already low overrides the battery pause** — an explicit arm is honored rather than silently doing nothing — down to a hard 5% floor, where it releases regardless so an override can't drain the Mac to a power-off. The override lasts for that session only: it isn't saved, and `--keep-awake` doesn't set it, since that flag can be baked into the login item and fires with nobody present to weigh a low battery against the task. A thermal pause is never overridable. The submenu holds two radio groups. The first is **Off** plus five track-line colors (**Dusty Teal**, the default, **Sand**, **Graphite**, **Mauve**, **Sage**): picking a color turns Keep Awake on with that tint, **Off** turns it off. The second is **Duration** — the timed release: **Until turned off** (the default), **30 minutes**, **1 hour**, **2 hours**, **4 hours**, **8 hours**, or **Custom…** (hours + minutes, up to 24 hours). Picking any duration also turns Keep Awake on, so arming a window is one click. **Option-clicking the menu bar item skips the menu entirely:** ⌥-click the creature (or either number slot) to turn Keep Awake on and off in place. On arms it with no window — the same as **Until turned off** — unless a window is already running, in which case ⌥-click releases that too, along with the low-battery override it was granted. A plain click still opens the menu, and so does a right- or Control-click; ⌘-drag still rearranges the item. Everything the menu enforces the gesture enforces: the battery pause, the override rule, and the 5% floor. With a window armed it's a real countdown: the `Keep Awake` row reads `Keep Awake: 29:24` and the submenu shows `29:24 left (until 8:18 PM)` — time remaining at seconds resolution plus the wall-clock moment it ends, ticking every second while the menu is open. **The countdown also runs on the menu bar itself, so the remaining time is a glance rather than a click:** the countdown sits cleanly beside the active element (`29:58` beside the runner GIF or trace chart, or `CPU 45%  29:58` in live value mode) in the Keep Awake tint — the paused tone while a condition has the hold suspended — and collapses back to nothing when the window ends or you turn it off. The slot reserves room for the widest form it can reach, so the ticking digits move nothing around them. An indefinite or process-bound hold shows no countdown, having no clock to show. When it elapses `caffeinate` exits on its own, Keep Awake returns to **Off**, and the Mac is free to sleep — handy for a long unattended task you won't be awake to babysit. The window is a *time* promise, not a *task* promise: it releases whether or not your job finished. An armed window **survives a relaunch or a reboot** — it is saved as the moment it ends, so what comes back is the remainder, not a fresh window, and a window that elapsed while the app was down does not come back at all. Also armable at launch with `--keep-awake` (see below). **The submenu's first row answers "is my Mac being held awake right now?" — by anything, not just by this app.** That is the question the menu used to get wrong: start `caffeinate -di -t 30m` in a terminal, or leave another utility holding sleep, and every Keep Awake surface here read `Off` while your Mac stayed up. Now the row reads `Mac held awake — this app · 29:24` when it's ours, `Mac held awake — caffeinate · until 8:18 PM` when it's someone else's (naming the holder, and its release time when it has one), `Idle sleep held, display is not — the Mac may still sleep` when what's held won't actually keep the Mac up, or `Nothing holding sleep`. The track line and the item tint follow it, so a hold you didn't start is visible without opening the menu — **faded** rather than solid, because only *this app's* hold is one the `Off` row can release. Two things it deliberately does not do: it never ticks a color row on someone else's behalf (that would make `Off` a button that can't turn off what it appears to describe), and it never promises your Mac won't sleep — clamshell, your `pmset` settings and the 5% battery floor are all invisible to it, so it names what is *holding* sleep and stops there.
-
-**The submenu's last section, `Other Assertions`, names what *else* is holding a sleep assertion** — one row per other process as `owner — AssertionType` (e.g. `caffeinate — PreventUserIdleDisplaySleep, PreventUserIdleSystemSleep ×2`, listing every type that process holds), read from IOKit's public power-management API, or `none`. It answers "the app says Off, so why isn't my Mac sleeping?" — the case that used to leave the menu truthful about itself and silent about the machine. It reports the **observation, not a conclusion**: an assertion is not proof the Mac can't sleep (`PreventUserIdleSystemSleep` alone doesn't hold the *display*, and the system follows the display down — which is why this app spawns `-di`), so the rows name the holder and the type and stop there. Cross-check any row with `pmset -g assertions`, which prints the same type strings. This app's own `caffeinate` is never listed — the countdown row above already reports it. Read-only: there is no button here to kill anything.
-- `Presets` (submenu) -> `Trace Chart` / `Live Value` (at the top above GIFs), followed by the animated GIFs: `Dog (White)` / `Dog (Black)` / `Horse (Black)` / `Horse (White)` / `Chihiro (Walking)` / `Chihiro (Walking, White)` / `Chihiro (Walking, Black)` / `Totoro` / `Totoro (Group, White)` / `Totoro (Group, Black)` / `Totoro (White)` / `Totoro (Black)`
-- `Update available: vX.Y.Z ->` (only shown when a newer release exists) and `Check for Updates...` — see [Updates](#updates)
-- `About`
-- `Exit`
-
-Metrics are refreshed every 2 seconds from the app's periodic sampler.
-
-## Updates
-
-On launch, the app checks whether a newer release exists by reading your git checkout's origin remote
-release tags (`git ls-remote --tags origin 'v*'`) and comparing the highest one to the running
-version. **This is the only network access the app makes**, it runs once per launch off the main
-thread, and it fails silently (offline, no `git`, or a non-git install → nothing happens). When a
-newer tag is found, an **`Update available: vX.Y.Z ->`** item appears in the menu; **`Check for
-Updates...`** re-checks on demand.
-
-Applying an update is always a deliberate two-step user action — click the menu item, then confirm —
-never automatic:
-
-1. Click **`Update available`** (or **`Check for Updates...`** when it finds a newer version).
-2. Confirm the dialog. The app runs `git pull --ff-only` in its install directory (never `--force` /
-   `reset`, so a modified or diverged checkout aborts cleanly and offers the releases page instead),
-   then compiles the new version. The app keeps running throughout — the menu shows
-   `Building vX.Y.Z…` while it works, which can take up to a minute.
-3. On success it offers a **Restart** button, which quits and relaunches you onto the new version.
-   Because the compile already happened, the icon comes back in about a second. Your Keep Awake
-   window, display mode, battery threshold, and Keep Awake tint carry over (they're saved to disk), and a
-   restart also carries the preset, load source, and fixed speed you picked
-   from the menu, which are not saved between ordinary launches.
-   - The button appears only when the app knows how to bring itself back: a normal (detached) launcher
-     run, or a start-at-login LaunchAgent. A `--foreground` run belongs to the shell that started it,
-     so there you get the manual instruction instead — quit from the menu and relaunch.
-   - Under the LaunchAgent, the relaunch uses the arguments baked into the login item, so a preset or
-     source you picked from the menu resets to those (everything saved to disk still carries over).
-
-Disable the check entirely with `--no-update-check` or `CO_AWAKE_UPDATE_CHECK=0`.
 
 ## Testing & CI
 
@@ -568,27 +253,21 @@ tests/qa.sh --launcher # also run the disruptive §6 launcher/singleton check
 tests/qa.sh --help
 ```
 
-Coverage is split into explicit tiers around one question — **does the check boot the GUI?**
-
 | Tier | Sections | Needs a GUI session? | Role |
 |---|---|---|---|
 | `core` | §1 build (warning-clean) · §2 CLI/version · §2a `snapshot` · §2b `status` · §2c `presets` | No | Primary gate — must pass before a release; headless-safe |
-| `gui` | §3 launch lifecycle · §3a–§3i Keep Awake / persistence / status item geometry / sleep assertions / animation driver / battery diagnostics / kernel thermal · §3j `status` and §3k idempotent `start` against a live instance · §5 reader readouts · §4 error paths (all boot `NSApplication` + a status item) | Yes (WindowServer) | Best-effort — needs a logged-in Mac; skipped on a headless host |
+| `gui` | §3 launch lifecycle · §3a–§3i Keep Awake / persistence / status item geometry / sleep assertions / animation driver / battery diagnostics / kernel thermal · §3j `status` and §3k idempotent `start` against a live instance · §5 reader readouts · §4 error paths | Yes (WindowServer) | Best-effort — needs a logged-in Mac; skipped on a headless host |
 | `launcher` | §6 launcher + singleton (disruptive `pkill`) | — | Manual — run locally before a release |
 | manual | the menu walk + the eyes-only checks — never scripted | — | Hands and eyes; a NOTE in the tiers above is an unanswered case, not a pass |
 
-**All regression/QA currently runs locally** — `tests/qa.sh` is the source of truth. There are **no unit
-tests**, by policy: every check launches the real binary and asserts a real side effect (a `caffeinate`
-child, a state file, the live status item's own geometry and readout) — never a re-ported copy of the app's
-own logic, which passes while the app is broken. This is why the `core` tier is thin: most of the real binary needs a status item, so the behavioral
-checks live in `gui`. The exceptions are `snapshot` (§2a), `status` (§2b) and `presets` (§2c), which build no GUI at all — running the
-snapshot in the headless tier *is* the proof that the readers answer with no WindowServer behind them.
+Every check launches the real binary and asserts a real side effect (a `caffeinate` child, a state
+file, the live status item's geometry and readout) — never a re-ported copy of the app's logic, which
+passes while the app is broken. `snapshot`, `status` and `presets` build no GUI, so running them in the
+headless tier *is* the proof the readers answer with no WindowServer behind them.
 
 A GitHub Actions workflow ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) mirrors these tiers
-on `macos-14` (`core` job + best-effort `gui` job), but its automatic push/PR triggers are **disabled
-to conserve the free-tier Actions quota** (macOS runners bill at a 10× minute multiplier). It's
-manual-dispatch-only for now — run it on demand from the Actions tab, or re-enable auto-runs by
-uncommenting the trigger block in the workflow.
+on `macos-14`, but its automatic triggers are **disabled to conserve the free-tier Actions quota**
+(macOS runners bill at a 10× minute multiplier); run it on demand from the Actions tab.
 
 ## How it compares
 
@@ -607,7 +286,7 @@ dashboard):
 | **Packaging** | Single Swift file + shell launcher (no Xcode project) | Xcode `.app` | Xcode `.app` | Xcode `.app` |
 | **Load sources** | CPU (with P/E split), memory+swap, DRAM bus bandwidth, GPU (with Renderer/Tiler split), network, disk, fan, battery, die temperature, Neural Engine power | CPU | CPU, GPU, RAM | Full hardware suite |
 | **Unbounded rates (net/disk/swap) drive the animation** | Yes — adaptive auto-scaling | — | — | n/a (numeric display) |
-| **In-menu readout** | 60s sparkline, numerics, load averages | Minimal | Numeric dropdown | Full graphs, temps, per-process |
+| **In-menu readout** | Live numerics per source, with P/E and Renderer/Tiler splits | Minimal | Numeric dropdown | Full graphs, temps, per-process |
 | **Battery health / cycle count** | Yes (menu-gated, unprivileged, never polled) | No | No | Yes |
 | **Per-process breakdowns** | No (out of scope by design) | No | No | Yes |
 | **Pauses when hidden; self-throttles under power/thermal pressure; honors Reduce Motion** | Yes | — | — | — |

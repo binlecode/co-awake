@@ -36,6 +36,35 @@ co-awake is a CLI-launched app; the surface that MAJOR / MINOR / PATCH bumps app
 Internal implementation details (Swift types, `Tuning` constants, file structure) are **not** part
 of the public API and may change in any release.
 
+## [Unreleased]
+
+### Fixed
+
+- **`snapshot` no longer reports a reassuring default it did not read.** A refused
+  `kern.memorystatus_vm_pressure_level` read (e.g. `EPERM` in a sandbox) printed
+  `"memory_pressure":"normal"`; it now omits the key, as it does for a value outside the kernel's
+  1/2/4 levels. `power_source` printed `"ac"` whenever the battery reader was unavailable; it is now
+  taken from explicit IOPS power-source descriptions and omitted when IOPS gives no answer, the supply is a
+  UPS, or no explicit battery description exists. `temp_c` printed the 30 °C scale
+  floor when every die cluster was parked; it is now absent there. `thermal` is absent for a level
+  this build cannot name instead of falling back to `"nominal"`. The menu is unchanged.
+
+### Documentation
+
+- **Honest telemetry contract** (`docs/ARCHITECTURE.md` § 4.7): an absent key means unknown, and
+  the caller owns that decision. Unattended agent jobs hold the machine awake with
+  `caffeinate -i -w <pid>`, not Keep Awake.
+- **User manual** (`docs/RUNBOOK-user-manual.md`, new): how people and agents use co-awake — a mental model
+  of the two tracks (menu bar for people, `snapshot` / `status` for programs), five scenarios ranked
+  by value (pre-inference bus and memory check, heat and fan diagnosis, unattended sleep holds,
+  appearance, battery health), a menu map with every Keep Awake state, how to read absent keys, a
+  CLI cheat sheet, and an FAQ. Registered as a document kind in `docs/ARCHITECTURE.md` § 0 and
+  `AGENTS.md`.
+- **README restructured** around the two tracks and routing to the manual and the architecture. The
+  long menu and Keep Awake walkthrough moved to the manual; stale descriptions of menu rows that no
+  longer exist (load averages, width, the in-menu history graph) and of `--keep-awake` being refused
+  by a running instance are gone.
+
 ## [3.0.0] - 2026-10-12
 
 ### Changed - Breaking

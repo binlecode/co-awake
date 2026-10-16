@@ -8,7 +8,7 @@
 
 ## 0. Document Routing & ADLC Taxonomy (Canonical Ground Truth)
 
-All repository documentation lives in `docs/`. The repository root holds only `README.md` (user entry point) and `CLAUDE.md` / `AGENTS.md` (agent instructions).
+All repository documentation lives in `docs/`. The repository root holds only `README.md` (entry point: what it is, install, and routing to `docs/RUNBOOK-user-manual.md` for usage and here for design) and `CLAUDE.md` / `AGENTS.md` (agent instructions).
 
 **This document (`docs/ARCHITECTURE.md`) is the canonical routing umbrella and as-built architectural ground truth.** Detailed subsystem designs and invariants reside here rather than in `CLAUDE.md`.
 
@@ -16,12 +16,14 @@ All repository documentation lives in `docs/`. The repository root holds only `R
    docs/
    +-- ARCHITECTURE.md          <-- You are here: system topology, subsystem specs (§1–§13),
    |                              telemetry algorithms, invariants, parameter reference, release hygiene.
+   +-- RUNBOOK-user-manual.md     How people and agents use it: scenarios, menu map, reading
+   |                              `snapshot` (absent key = unknown), CLI cheat sheet, FAQ.
    +-- ROADMAP.md                 The standing product tracker: candidate backlog (R<n>).
    +-- RESEARCH-<topic>.md        External peer surveys and ecosystem research (e.g. peer-survey.md);
    |                              facts-only, dated evidence outside the ADLC landing chain.
    +-- PLAN-<topic>.md            Active feature / issue design and implementation plans;
    |                              distilled into ARCHITECTURE.md upon landing, then `git rm` deleted.
-   +-- cover.html, media/         Public landing page and visual assets.
+   +-- media/                     Public landing page (media/cover.html) and visual assets.
    +-- .agents/skills/<name>/    Agent-executable operational workflows (build-visuals, etc.; symlinked from .claude/skills).
 ```
 
@@ -32,6 +34,7 @@ All repository documentation lives in `docs/`. The repository root holds only `R
 | **Roadmap** | `docs/ROADMAP.md` | Single standing tracker for open candidate backlog (`R<n>`). Never deleted. |
 | **Plan / Proposal** | `docs/PLAN-<topic>.md` | Active feature design, options, and verification checklist. **Absorbed into `docs/ARCHITECTURE.md` upon landing, then immediately deleted (`git rm`)**. |
 | **As-Built Architecture** | `docs/ARCHITECTURE.md` | Canonical description of what the code actually is, system boundaries, architectural decisions, and declined proposals with rationale. Updated only after code lands and stabilizes. |
+| **User Manual** | `docs/RUNBOOK-user-manual.md` | Lives with the system. Task-oriented usage for people (menu bar) and agents (`snapshot`, `status`): scenarios, interpretation of readings, CLI cheat sheet, FAQ. Explains *when and how to use* what this document specifies; mechanism and rationale stay here, and the flag reference stays in `awake --help`. |
 | **External Research** | `docs/RESEARCH-<topic>.md` | Public surveys and external benchmarks. Does not enter the ADLC landing cycle; retained as dated evidence. |
 
 - **Strict Document Kinds:** No invented prefixes (`REPORT-`, `DESIGN-`, `TODO-`, `LESSONS`, `RUNBOOK-`, `JOURNAL`).
@@ -466,6 +469,7 @@ The unprivileged readers used to run inside a status item, so the only consumer 
 | Field projection / filtering | Caller piping to `jq` or JSON parsers | Not `snapshot` (no `--query`; rates require discrete delta window) |
 | Admission decisions | Caller's workload orchestrator applying thresholds | Not `snapshot` (no `--check`; thresholds belong to caller; keeps `CO_AWAKE_FORCE_THERMAL` display-only) |
 | Tool schema export | Calling agent harness native registry | Not `snapshot` (no `--tool-spec`; avoids duplicate schema drift without consumers) |
+| Unattended sleep hold for an agent's job | The agent, via `caffeinate -i -w <pid>` bound to its own job | Not this app. Keep Awake is a person's menu control with a 5% floor and a persisted intent; a headless job needs a hold whose lifetime is the job's PID, which the system tool already gives with no resident process. Reopen if an agent needs something `caffeinate` cannot express |
 
 The core never imports a display concept. It returns MB/s, °C, W, RPM, %, A — never the 0..1 driver value. Normalization to 0..1 is a speed-mapping question, which is why the scalers (§ 4.4) stay *inside* the readers, where they are how a rate reader produces its own number, and why nothing in a snapshot reads one. The core also never touches `state.json`: a snapshot describes the machine, not this app's intent, and a second writer would break the single-writer model (§ 8.2).
 
@@ -476,12 +480,17 @@ The core never imports a display concept. It returns MB/s, °C, W, RPM, %, A —
 | Argument form | `snapshot` **takes no arguments.** Any flag with it is a usage error, not a silent ignore — every flag configures a GUI this path does not build |
 | Output | Exactly one line on stdout, a JSON object, newline-terminated. Nothing else on stdout, ever — the usage error above prints to stderr *without* the usage block for this reason |
 | Unavailable source | Its keys are **absent**. Never `null`, never a zero standing in for "no reading" |
+| Honest telemetry | A key is printed only when the system stated it. A failed or unrecognized read is absent, never the benign value — see below |
 | Side effects | None. No `NSApplication`, no status item, no `state.json` read or write, no `caffeinate`, no update check, no compile |
 | Concurrency | Safe while a GUI instance runs, and safe in parallel with itself. It holds nothing and writes nothing |
 | Exit | `0` a snapshot was printed (even if degraded) · `1` usage error · `2` binary not built (launcher only, names `build`) |
 | Latency | One process start plus one sampling window. ~290 ms wall measured on an M4 Max, dominated by the window |
 
 The rate readings (network, disk, swap, battery current, ANE) are counter deltas and do not exist at a single instant, so the path samples, waits `Tuning.snapshotWindow`, samples again against the *measured* gap, and prints. The budget is therefore a window, not a syscall: a sub-10 ms snapshot could only carry the point readings, and splitting the schema into fast keys and slow keys would be two schemas.
+
+**Honest telemetry contract.** `snapshot` is the machine-vitals probe an agent reaches for before or during heavy work, and the keys an agent gates on — `memory_pressure`, `power_source`, `thermal`, `temp_c` — are exactly the ones where a fallback does damage. A fallback to `"normal"`, `"ac"`, `"nominal"` or a scale floor converts "could not ask" into a green light, and the caller cannot tell the two apart. So none exists: a refused `sysctl` (sandboxes return `EPERM`), an IOPS call with no answer, a UPS supply (neither word in the vocabulary), a thermal level this build cannot name, or every die cluster power-gated each leave the key out. The caller owns the decision for an absent key; absence means unknown, not fine. The GUI keeps its own fallbacks — a menu annotation that reads "nominal" for an unknown level misleads no automated decision — which is why `KernelThermalPressure` has a display read and a snapshot read.
+
+`power_source` is determined from explicit IOPS power-source descriptions (`IOPSCopyPowerSourcesList`): it appears only when an explicit description confirms AC or battery. Empty description lists (such as a desktop Mac lacking smart battery descriptions), failed IOPS queries, UPS supplies, or conflicting states leave the key absent. The all-parked temperature case is the subtle one: the reader reports the animation scale's floor so the menu can say "≤ 30 °C", which is a bound, not a measurement, and has no key here (the guard `!temperatureMonitor.perSensor.isEmpty` ensures only actively measured sensors emit `temp_c`).
 
 **Schema.** `v` is the contract version and the only field always present; every other key appears when its reader answered. Names carry their unit — `_mibs` is MiB/s (the menu writes "MB/s" as display shorthand: same number, not a second fact). Adding a field is not a version bump; removing one or changing what it means is, and consumers read by key and ignore what they do not know.
 
@@ -492,8 +501,8 @@ The rate readings (network, disk, swap, battery current, ANE) are counter deltas
 | Field | Unit | Reader | Absent when |
 |---|---|---|---|
 | `v` | int | — | never |
-| `power_source` | `"ac"` · `"battery"` | `BatteryLoadMonitor` / IOKit | never |
-| `memory_pressure` | `"normal"` · `"warn"` · `"critical"` | `sysctl kern.memorystatus_vm_pressure_level` | never |
+| `power_source` | `"ac"` · `"battery"` | IOPS power source descriptions | IOPS gave no answer, no explicit battery description, or supply is a UPS |
+| `memory_pressure` | `"normal"` · `"warn"` · `"critical"` | `sysctl kern.memorystatus_vm_pressure_level` | `sysctl` refused (e.g. sandbox `EPERM`) or returned a value outside 1/2/4 |
 | `cpu_pct` | % | `CPULoadMonitor` | never (Mach always answers) |
 | `cpu_p_pct` · `cpu_e_pct` | % | `CPULoadMonitor` cluster split (§ 4.1) | no published cluster map — both absent together, never one |
 | `cpu_p_cores` · `cpu_e_cores` | int | `CPULoadMonitor` topology counts | no published cluster map — both absent together |
@@ -508,15 +517,15 @@ The rate readings (network, disk, swap, battery current, ANE) are counter deltas
 | `battery_pct` | % | `BatteryLoadMonitor` | desktop, no battery |
 | `battery_a` | A, discharge positive | `BatteryLoadMonitor` | not discharging (AC, or no current reading) |
 | `battery_health_pct` · `battery_cycles` | % · int | `BatteryDiagnosticsReader` | desktop or battery service unavailable |
-| `temp_c` | °C, hottest die sensor | `TemperatureLoadMonitor` (SMC) | no readable `Tp**` cluster |
-| `thermal` | `nominal` · `fair` · `serious` · `critical` | `KernelThermalPressure` | never |
+| `temp_c` | °C, hottest die sensor | `TemperatureLoadMonitor` (SMC) | no readable `Tp**` cluster, or every cluster parked |
+| `thermal` | `nominal` · `fair` · `serious` · `critical` | `KernelThermalPressure` | the OS reports a level this build cannot name |
 | `ane_w` | W | `ANELoadMonitor` (IOReport) | channel absent |
 
 Precision follows the reader, not the field: percentages and °C carry one decimal, rates, watts and amps two, RPM none — each finer than the hardware's own resolution. The line is assembled by hand rather than by `JSONEncoder`, because the contract fixes the key order and the per-unit precision and an encoder gives neither.
 
 **Launcher dispatch.** `snapshot` goes to the binary ahead of both the singleton guard and `compile_if_stale`, with argv unchanged (the no-arguments rule is the binary's to enforce, since it owns the usage text). The source being newer than the binary is deliberately not consulted: a reading from the previous build is still a true reading, and compiling here would put a `swiftc` race back in front of the very guard that exists to prevent one (§ 2). A missing binary is one stderr line naming `build` and exit 2.
 
-**Headless is measured, not assumed.** The GPU (IOAccelerator), SMC and IOReport readers are kernel-side and were *expected* to answer with no WindowServer connection. `tests/qa.sh` §2a is what turns that into a measurement: it runs in the core tier, which never boots a GUI, and asserts the always-present keys are there rather than only that the JSON parses — a snapshot degrading to `{"v":1}` would otherwise pass "absent when unavailable" while telling the truth about nothing.
+**Headless is measured, not assumed.** The GPU (IOAccelerator), SMC and IOReport readers are kernel-side and were *expected* to answer with no WindowServer connection. `tests/qa.sh` §2a is what turns that into a measurement: it runs in the core tier, which never boots a GUI, and asserts the always-present keys are there rather than only that the JSON parses — a snapshot degrading to `{"v":1}` would otherwise pass "absent when unavailable" while telling the truth about nothing. The categorical keys are asserted the other way round: absence is a NOTE, a value outside the vocabulary is the failure.
 
 **Headless negative space.** `snapshot` emits the full JSON snapshot line exclusively. Single-field extraction (`--query`), admission gating (`--check`), and agent tool-schema export (`--tool-spec`) are explicitly declined: rate counters require a discrete integration window (querying $N$ fields costs $N \times 200\text{ ms}$ vs. single 200 ms `snapshot | jq`), admission thresholds belong to caller orchestrators, and static schema export introduces drift without active consumers. Re-proposal requires a caller environment that demonstrably cannot pipe stdout or an external agent harness that dynamically ingests CLI tool schemas.
 
@@ -1320,7 +1329,7 @@ self-restraint — it only ever reads the system, and the only thing it throttle
 ## 13. Release Hygiene & Delivery Discipline
 
 A version bump moves five surfaces together: `AppInfo.version`, the `CHANGELOG.md` heading, the
-`README.md` version line, the `docs/cover.html` badge, and the git tag `UpdateChecker` reads.
+`README.md` version line, the `docs/media/cover.html` badge, and the git tag `UpdateChecker` reads.
 `tests/qa.sh` §2 enforces the first four; the tag is deliberately unchecked (qa.sh runs before it
 exists), so **pushing the commit and tag is the last manual step**. One rule with no other home: **the
 tag gates the prompt; the branch carries the code** — a behavioral change committed *after* its release
@@ -1333,7 +1342,7 @@ silently, and nothing upstream catches it:
 1. Bump `AppInfo.version`; move `CHANGELOG.md`'s `[Unreleased]` items into a dated section.
    MAJOR/MINOR/PATCH follow the public-API definition at the top of `CHANGELOG.md` (CLI flags, env
    vars, preset keywords + `presets.json` schema, observable behavior).
-2. Give `docs/cover.html` the release's **prose**, not just its badge, then redeploy (the
+2. Give `docs/media/cover.html` the release's **prose**, not just its badge, then redeploy (the
    `publish-cover` skill; `npx wrangler whoami` first — the OAuth token usually persists, so no
    interactive login is needed). qa.sh §2 greps the badge and nothing else, so a cover describing the
    *previous* release passes every check while the badge reads as proof it is current. Its interactive

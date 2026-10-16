@@ -2960,14 +2960,17 @@ enum KernelThermalPressure: String {
     // down yet, so annotating there would cry wolf on a machine that is merely warm.
     var isThrottling: Bool { self == .serious || self == .critical }
 
-    static func current() -> KernelThermalPressure {
-        if let forced { return forced }
+    // Display overrides and the unknown-level fallback belong only to current().
+    // Snapshot reads reading(), which maps the system value without a test override.
+    static func current() -> KernelThermalPressure { forced ?? reading() ?? .nominal }
+
+    static func reading() -> KernelThermalPressure? {
         switch ProcessInfo.processInfo.thermalState {
         case .nominal:  return .nominal
         case .fair:     return .fair
         case .serious:  return .serious
         case .critical: return .critical
-        @unknown default: return .nominal
+        @unknown default: return nil
         }
     }
 
@@ -3167,6 +3170,34 @@ private final class BatteryLoadMonitor {
         hasSample = true
         currentLoad = scaler.normalize(speed: currentDischargeMilliamps)
         return currentLoad
+    }
+
+    // Only explicit descriptions can establish AC/battery. The providing-source getter hides
+    // internal errors behind AC; an empty description list cannot distinguish a desktop from
+    // a failed query. UPS, missing, unknown and conflicting descriptions remain absent.
+    static func providingPowerSourceIsBattery() -> Bool? {
+        if let forced = forcedState { return forced.onBattery }
+        guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [Any] else { return nil }
+        var answer: Bool?
+        for source in list {
+            guard let desc = IOPSGetPowerSourceDescription(blob, source as CFTypeRef)?
+                    .takeUnretainedValue() as? [String: Any],
+                  let present = desc[kIOPSIsPresentKey] as? Bool else { return nil }
+            if !present { continue }
+            // Conservative: UPS or an unknown source cannot be represented by this schema.
+            guard desc[kIOPSTypeKey] as? String == kIOPSInternalBatteryType else { return nil }
+            let onBattery: Bool
+            switch desc[kIOPSPowerSourceStateKey] as? String {
+            case kIOPSACPowerValue: onBattery = false
+            case kIOPSBatteryPowerValue: onBattery = true
+            default: return nil
+            }
+            if let answer, answer != onBattery { return nil }
+            answer = onBattery
+        }
+        // Empty lists include both desktops and failed queries; neither proves AC.
+        return answer
     }
 
     private static func batteryPresent() -> Bool {
@@ -3718,7 +3749,7 @@ private struct TelemetrySnapshot {
     var batteryHealthPercent: Double?
     var batteryCycles: Int?
     var temperatureCelsius: Double?
-    var thermal: KernelThermalPressure = .nominal
+    var thermal: KernelThermalPressure?
     var aneWatts: Double?
 
     // Hand-rolled rather than JSONEncoder, because the contract is one line with a fixed key order
@@ -3765,7 +3796,7 @@ private struct TelemetrySnapshot {
         add("battery_health_pct", batteryHealthPercent, decimals: 1)
         addInt("battery_cycles", batteryCycles)
         add("temp_c", temperatureCelsius, decimals: 1)
-        fields.append("\"thermal\":\"\(thermal.rawValue)\"")
+        addString("thermal", thermal?.rawValue)
         add("ane_w", aneWatts, decimals: 2)
         return "{" + fields.joined(separator: ",") + "}\n"
     }
@@ -3890,23 +3921,21 @@ private final class TelemetryCore {
         for source in sources { _ = sampleSource(source, elapsed: elapsed) }
 
         var snap = TelemetrySnapshot()
-        // The kernel's own level, not a reader — always answers, on every Mac.
-        snap.thermal = KernelThermalPressure.current()
-        if batteryMonitor.isAvailable {
-            snap.powerSource = batteryMonitor.onBattery ? "battery" : "ac"
-        } else {
-            snap.powerSource = "ac"
-        }
+        // The three categorical keys are the ones a caller is most tempted to gate work on, so each is
+        // stated only when the system stated it. A failed or unrecognized read is an absent key — never
+        // the benign value, which would turn "could not ask" into a green light.
+        snap.thermal = KernelThermalPressure.reading()
+        snap.powerSource = BatteryLoadMonitor.providingPowerSourceIsBattery().map { $0 ? "battery" : "ac" }
         var vmPressure: Int32 = 0
         var vmPressureSize = MemoryLayout<Int32>.size
         if sysctlbyname("kern.memorystatus_vm_pressure_level", &vmPressure, &vmPressureSize, nil, 0) == 0 {
+            // The kernel's levels are 1/2/4 (normal/warn/critical); anything else is not a level.
             switch vmPressure {
+            case 1: snap.memoryPressure = "normal"
             case 2: snap.memoryPressure = "warn"
-            case 4...: snap.memoryPressure = "critical"
-            default: snap.memoryPressure = "normal"
+            case 4: snap.memoryPressure = "critical"
+            default: break
             }
-        } else {
-            snap.memoryPressure = "normal"
         }
         if loadMonitor.hasSample {
             snap.cpuPercent = loadMonitor.smoothedUsage * Tuning.percentScale
@@ -3949,7 +3978,11 @@ private final class TelemetryCore {
                 snap.batteryCycles = diag.cycleCount
             }
         }
-        if temperatureMonitor.hasSample { snap.temperatureCelsius = temperatureMonitor.currentCelsius }
+        // Only a measured sensor. With every cluster parked the reader reports the animation scale's
+        // floor so the menu can say "≤"; that is a bound, not a die temperature, and has no key here.
+        if temperatureMonitor.hasSample, !temperatureMonitor.perSensor.isEmpty {
+            snap.temperatureCelsius = temperatureMonitor.currentCelsius
+        }
         if aneMonitor.hasSample { snap.aneWatts = aneMonitor.currentWatts }
         if bandwidthMonitor.hasSample { snap.bandwidthGBPerSec = bandwidthMonitor.currentGigabytesPerSec }
         return snap
