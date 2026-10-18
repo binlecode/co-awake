@@ -135,7 +135,7 @@
           |                                             |
           v                                             v
    caffeinate -i -w <pid>                        Option-click 状态栏图标
-   (系统自带)                                    (或菜单 Keep Awake > 选时长)
+   (系统自带)                                    (或菜单首行 / Keep Awake For > 选时长)
           |                                             |
    - 绑定任务自己的 PID，任务退出即释放          - 30m / 1h / 2h / 4h / 8h /
    - 多个任务各持一把，互不影响                    自定义 (<= 24h) / 直到关闭
@@ -156,7 +156,7 @@
 #### 关键交互点：
 - **Agent 不用 Keep Awake**：Keep Awake 是给人的控件，会写入 `state.json` 持久化意图、受电量阈值约束；Agent 的任务需要的是「任务活多久就持有多久」，`caffeinate -w` 原生就是这个语义，而且不需要 co-awake 在运行。
 - **`-i` 的已知局限**：`-i` 只阻止「空闲系统睡眠」，不阻止屏幕熄灭。本应用自己的 Keep Awake 用 `-di`，原因是在新版 macOS 上屏幕睡下去后系统可能跟着睡（见 ARCHITECTURE §7.1）；菜单也会把只有 `-i` 的持有显示为 `Idle sleep held, display is not — the Mac may still sleep`。如果任务必须跑完、且能接受屏幕常亮，用 `caffeinate -di -w <pid>`。
-- **想在状态栏上看到任务绑定的持有**：`long-job.sh & awake --keep-awake-pid $!`，或菜单 `Keep Awake ▸ Until a process exits…` 输入 PID 或进程名（如 `claude`，取你名下最新的同名进程）。这条路受电量保护约束，且不会在重启后恢复（PID 会被复用）。
+- **想在状态栏上看到任务绑定的持有**：`long-job.sh & awake --keep-awake-pid $!`，或菜单 `Keep Awake For ▸ Until a process exits…` 输入 PID 或进程名（如 `claude`，取你名下最新的同名进程）。这条路受电量保护约束，且不会在重启后恢复（PID 会被复用）。
 - **合盖睡眠挡不住**：电池供电下合盖，任何无特权方式都无法阻止睡眠；需要合盖运行请接电源 + 外接显示器（苹果标准合盖模式）。
 
 ---
@@ -171,7 +171,7 @@
 | 曲线 | `--display trace` | 12 格单色迷你曲线（随深浅色外观自适应） | 看最近趋势 |
 | 数值 | `--display value` | 实时读数，如 `CPU 15%`、`NET ↓3.4 ↑0.1` | 要一个准数 |
 
-**动图预设**：白 / 黑狗、黑 / 白骏马（默认白马 `horse-white`）、千寻散步（彩色 / 白 / 黑）、龙猫（单只 / 一群，彩色 / 白 / 黑）。`awake presets` 列出全部 key；也可以指定任意 GIF 的绝对路径。
+**动图预设**：黑 / 白骏马（默认白马 `horse-white`）、千寻散步（彩色 / 白 / 黑）、龙猫（单只 / 一群，彩色 / 白 / 黑）。`awake presets` 列出全部 key；也可以指定任意 GIF 的绝对路径。
 
 **驱动源（谁决定跑速）**：`cpu`（默认）、`memory`、`bandwidth`、`gpu`、`network`、`disk`、`fan`、`battery`、`temperature`、`ane`。本机读不到的源自动隐藏，指定了也会回落到 `cpu`。
 
@@ -187,7 +187,7 @@
 #### 关键交互点：
 - **同一条命令，运行中即热切换**：`--preset`、`--display`、`--load-source`、`--keep-awake`、`--keep-awake-pid`、`--battery-threshold` 对已运行的实例直接生效，返回 `{"action":"forwarded",...}`；设置没变则返回 `unchanged`。
 - **只在启动时有效的旗标会被拒绝**：`--speed-multiplier`、`--show-all-sources`、`--no-update-check`、`--foreground` 在实例运行时报错退出（exit 1），不会被静默忽略。
-- **菜单里也能点**：`Display Mode ▸`（形态）、`Runner Preset ▸`（动图）、`Selected Metric ▸`（驱动源）。
+- **菜单里也能点**：`Settings ▸ Display Mode ▸`（形态）、`Settings ▸ Runner Preset ▸`（动图，任何形态下都可选，选了自动切回动图）；**驱动源直接点读数行**（带圆点的那行就是当前驱动源）。
 - **宽度不可配置**：状态栏宽度由 GIF 宽高比自动决定，读数变化时不会左右抖动。
 - **加自己的预设**：放 GIF 到 `gifs/`，在 `gifs/presets.json` 加一项，无需改代码（流程见 `AGENTS.md`）。
 
@@ -204,7 +204,7 @@
 #### 关键交互点：
 - **字段**：`battery_pct` 电量、`battery_health_pct` 健康度（当前最大容量 / 设计容量）、`battery_cycles` 循环次数、`battery_a` 放电电流（安培，正数为放电）。
 - **`battery_a` 只在放电时出现**：接电源充电或电流读不到时该键缺失 —— 它是「掉电速度」，不报充电电流。
-- **菜单里看得更细**：点开菜单，`Battery` 行显示健康度与循环次数，悬停可看状况（如 `Normal`）、当前与设计容量（mAh）。健康度低于 80% 或硬件报告永久故障时显示 `Service Recommended`，与 macOS 自身判定一致。
+- **菜单里看得更细**：`Diagnostics ▸` 的 `Battery` 行显示放电电流、健康度与循环次数；悬停根菜单 `Battery` 行可看状况（如 `Normal`）、当前与设计容量（mAh）。健康度低于 80% 或硬件报告永久故障时显示 `Service Recommended`，与 macOS 自身判定一致。
 - **不轮询**：健康度和循环次数以月为单位变化，菜单只在打开时读一次，关闭即丢弃。台式机没有电池，相关键与菜单行全部缺失。
 
 ---
@@ -212,28 +212,38 @@
 ## 菜单地图（点击状态栏图标）
 
 ```
-  CPU ... / Memory ... / GPU ... / ...     <- 每个可用读数源一行，实时刷新（只读）
-  Slowing animation — <原因>               <- 仅在自限流时出现（热 / 低电量模式 / 内存压力）
+  Start Keep Awake                         <- 首行：一键开关（= Option-click）
+    (开启后变为 Stop Keep Awake · 29:58 left / · until claude (41293) exits / · paused)
+  Keep Awake For  >  30 minutes / 1 hour / 2 hours / 4 hours / 8 hours
+                     Until turned off / Until a process exits… / Custom…
+                     (倒计时与结束钟点，或暂停原因；仅在需要时出现)
+                     Battery Release Threshold: 20%  >  10% / 15% / 20% / 30% / Never / Custom…
   ----------------------------------------
-  Keep Awake  >  Off
-                 Until turned off / 30 minutes / 1 hour / 2 hours / 4 hours / 8 hours / Custom…
-                 Until a process exits…
-                 (倒计时或暂停原因, 仅在需要时出现)
-                 Battery Safety Floor  >  10% / 15% / 20% / 30% / Never / Custom…
-                 Indicator Bar Tint    >  Dusty Teal / Sand / Graphite / Mauve / Sage
-                 (这台 Mac 此刻是否被持有、被谁持有)
-                 Other Assertions: (其他进程持有的睡眠断言, 或 none)
+  * CPU: 12%                               <- 每个可用读数源一行，只显示主值；点哪行哪行驱动动画
+    Memory: 64%                               * 圆点 = 当前驱动源；本机读不到的源自动隐藏
+    ...
+    ANE: 0.31 W
+    -> Slowing animation — <原因>         <- 仅在自限流时出现（热 / 低电量模式 / 内存压力）
   ----------------------------------------
-  Display Mode   >  Runner GIF / Trace Chart / Live Value
-  Runner Preset  >  (全部动图预设)
-  Selected Metric > (全部可用驱动源)
+  Diagnostics  >  Mac held awake — <谁> / Nothing holding sleep（整机此刻是否被持有、被谁持有）
+                  Other Assertions（其他进程持有的睡眠断言）
+                  CPU: P 45% · E 12% / GPU: Renderer … · Tiler … / Memory: swap … /
+                  Temperature: P-cores … / Fan: Fan 1 … / Battery: 1.2 A · 92% health …
+                  （拆分读数；读不到或尚未采样的行不出现，不显示 0）
+                  Animation Speed: 1.25x (auto)
+  Settings     >  Display Mode  >  Runner GIF / Trace Chart / Live Value
+                  Runner Preset >  （全部动图预设，任何形态下都在）
+                  Indicator Bar Tint  >  Dusty Teal / Sand / Graphite / Mauve / Sage
+                  Start at Login
+                  Check for Updates… / Checking for Updates… / Update to vX.Y.Z… / Building vX.Y.Z…
+                  （有新版本时根菜单这一行显示为 Settings · Update available）
   ----------------------------------------
-  Start at Login
-  Update available: vX.Y.Z  (有新版本时)  /  Check for Updates…
   About / Exit
 ```
 
-**手势**：普通点击、右键、Control-click 打开菜单；**Option-click** 不开菜单、直接开关 Keep Awake；⌘-拖动调整图标位置。
+**手势**：普通点击、右键、Control-click 打开菜单；**Option-click** 不开菜单、直接开关 Keep Awake，和点菜单首行完全等价（同一条路径，同样受 5% 底线约束）；⌘-拖动调整图标位置。
+
+**点读数行要知道的代价**：点**另一个**读数行会切换驱动源，并清空状态栏曲线（Trace）约 24 秒的走势（不同源单位不同，走势不能接着画），新源会被记住；点回去不会恢复旧走势。点**当前已选中**的那行什么都不变。
 
 **Keep Awake 的几种状态怎么看**：
 
@@ -241,15 +251,16 @@
 |---|---|
 | 图标底部实色条 | 本应用正在持有，Mac 不会因空闲睡眠 |
 | 图标旁倒计时 `29:58` | 定时窗口剩余时间；「直到关闭」或绑定进程的持有没有倒计时 |
-| 色条变淡 | 不是本应用，是别的进程（如你自己跑的 `caffeinate`）在持有 —— 本应用的 `Off` 关不掉它 |
-| 色条更淡 + 菜单 `(paused)` | 已开启但暂时让出：电量低于阈值、电量 ≤ 5%、或机器过热；条件解除后自动恢复 |
+| 色条变淡 | 不是本应用，是别的进程（如你自己跑的 `caffeinate`）在持有 —— 本应用的 `Stop Keep Awake` 关不掉它 |
+| 色条更淡 + 首行带 `· paused` | 已开启但暂时让出：电量低于阈值、电量 ≤ 5%、或机器过热；原因写在 `Keep Awake For ▸` 里；条件解除后自动恢复 |
 
 **Keep Awake 的保护规则**：
 - **电量阈值**（默认 20%，可设 6–100% 或 `Never`）：电池供电且低于阈值时自动暂停，接上电源自动恢复。
 - **5% 硬底线**：电量 ≤ 5% 无条件释放，任何设置、菜单操作、命令行参数都绕不过去。
-- **低电量下手动开启**：在菜单或 Option-click 开启，会覆盖阈值暂停（仅本次会话，不持久化），但仍止于 5%。命令行 `--keep-awake` 不享有这个覆盖，因为它可能写在开机自启里、没人在场判断。
+- **低电量下手动开启**：点菜单首行、选时长或 Option-click 开启，会覆盖阈值暂停（仅本次会话，不持久化），但仍止于 5%。命令行 `--keep-awake` 不享有这个覆盖，因为它可能写在开机自启里、没人在场判断。
 - **过热暂停不可覆盖**。
-- **重启后恢复**：未到期的定时窗口按剩余时间恢复；已到期的不恢复；「直到关闭」不恢复（没有终点的持有会在每次重启后悄悄让 Mac 不睡）；绑定进程的持有不恢复。
+- **暂停不顺延**：定时窗口按墙上时钟算，暂停期间照样倒计时，恢复后不补时间。
+- **重启后恢复**：未到期的定时窗口按剩余时间恢复；已到期的不恢复（包括暂停期间过期的）；「直到关闭」不恢复（没有终点的持有会在每次重启后悄悄让 Mac 不睡）；绑定进程的持有不恢复。
 
 ---
 
@@ -299,7 +310,7 @@
 awake snapshot | jq '{bw_gbps, memory_pressure, swap_mibs, thermal}'   # 推理前体检
 awake snapshot | jq '{temp_c, thermal, fan_rpm, cpu_p_pct, cpu_e_pct}' # 发热定因
 awake status | jq -e .keep_awake.active                                # 用户是否开启了防休眠意图（暂停时仍为 true，真防睡须看 pmset）
-awake --preset dog-black --display value                               # 换外观（运行中热切换）
+awake --preset horse-black --display value                             # 换外观（运行中热切换）
 awake --keep-awake 2h                                                  # 人用：定时 2 小时
 long-job.sh & awake --keep-awake-pid $!                                # 人用：任务结束即释放（状态栏可见）
 caffeinate -i -w "$PID"                                                # Agent 用：绑定任务 PID，不经过本应用
@@ -318,12 +329,15 @@ caffeinate -i -w "$PID"                                                # Agent �
 | `awake snapshot` 退出码 2，提示 `build` | 二进制还没编译过。运行 `awake build` 一次即可；`snapshot` 故意不替你编译，避免一次查询变成 30 秒的编译。 |
 | `snapshot` 为什么要 0.3 秒？ | 网速、磁盘、换页、DRAM 总线带宽、神经引擎功耗都是「两次采样之差」，必须等待约 200ms 的物理采样窗口。放电电流等则是即时读数。 |
 | 菜单里某个读数源不见了 | 本机读不到该硬件（如 Intel 无带宽 / 神经引擎、台式机无电池、Air 无风扇），自动隐藏。 |
-| Keep Awake 显示 Off，但 Mac 就是不睡 | 看 `Keep Awake ▸` 最上方的整机状态行和底部 `Other Assertions`，会列出其他持有睡眠断言的进程。可用 `pmset -g assertions` 交叉核对。 |
-| Keep Awake 自己暂停了 | 菜单 `Keep Awake` 行会显示 `(paused)`，子菜单写明原因：电量低、电量 ≤ 5%，或机器过热。条件解除后自动恢复。 |
+| 首行是 `Start Keep Awake`（没开），但 Mac 就是不睡 | 看 `Diagnostics ▸` 最上方的整机状态行和 `Other Assertions`，会列出其他持有睡眠断言的进程。可用 `pmset -g assertions` 交叉核对。 |
+| Keep Awake 自己暂停了 | 首行会带 `· paused`，`Keep Awake For ▸` 里写明原因：电量低、电量 ≤ 5%，或机器过热。条件解除后自动恢复。 |
+| 暂停时定时窗口会顺延吗？ | 不会。窗口按墙上时钟走，暂停期间照样倒计时。如果暂停期间就过了结束时间：同一次运行里条件解除后大约 1 秒就自动结束；在那之前首行仍是 `Stop Keep Awake · paused`（没有倒计时），点它就彻底关闭。应用重启后，过期的窗口不会恢复。 |
+| 怎么关掉 Keep Awake？ | 点菜单首行 `Stop Keep Awake …`，或 Option-click 图标。`Keep Awake For ▸` 里没有 `Off`。 |
+| 怎么换驱动源？ | 直接点菜单里的读数行。圆点在哪行，哪行就是驱动源。 |
 | 合盖后还是睡了 | 电池供电合盖无法用无特权方式阻止。接电源 + 外接显示器才能合盖运行。本应用不会用 `pmset disablesleep` 改系统策略。 |
 | 动图不动了 | 开启了系统「减弱动态效果」（此时状态栏自动改显示数值），或图标被刘海 / 全屏应用挡住（被挡时完全停止渲染，0% CPU）。 |
 | 动图突然变慢了 | 热压力、低电量模式或内存压力下，应用会把自己的动画速度上限减半；菜单出现 `Slowing animation — <原因>`。 |
-| 它会联网吗？ | 只有启动时和点 `Check for Updates…` 时用 `git ls-remote` 查一次版本标签。可用 `--no-update-check` 关闭。 |
+| 它会联网吗？ | 只有启动时和点 `Settings ▸ Check for Updates…` 时用 `git ls-remote` 查一次版本标签。可用 `--no-update-check` 关闭。 |
 | 怎么停止？ | 菜单 `Exit`，或 `pkill -f CoAwake`。后台运行的日志在 `/tmp/co-awake.log`。 |
 | 读数和活动监视器对不上 | CPU 有短时间移动平均；网速 / 磁盘是采样窗口内的平均速率。口径不同，量级应一致。 |
 | 能不能加进程排行 / 每传感器温度列表？ | 不在范围内。进程用 `ps` / `top`，详细传感器用 [stats](https://github.com/exelban/stats)。理由见 ARCHITECTURE §4.10。 |

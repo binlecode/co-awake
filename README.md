@@ -10,7 +10,7 @@ speed tracks system load (or a trace chart, or a live number), and toggle Keep A
 — DRAM bus bandwidth, memory pressure, die temperature, P/E-core split, GPU, Neural Engine power, fans,
 battery — read without privileges and without touching the menu bar.
 
-Current version: **3.0.0** (see [`CHANGELOG.md`](CHANGELOG.md)).
+Current version: **3.1.0** (see [`CHANGELOG.md`](CHANGELOG.md)).
 
 **Cover page:** [co-awake.pages.dev](https://co-awake.pages.dev)
 
@@ -26,8 +26,8 @@ Current version: **3.0.0** (see [`CHANGELOG.md`](CHANGELOG.md)).
 |---|---|---|
 | **Read the machine** | Glance at the status bar (runner GIF, trace chart, or live value); click for every reading | `awake snapshot` — one JSON line, physical units, ~0.3 s, writes nothing |
 | **Is the app up, is it holding sleep?** | The track line under the icon, the countdown beside it | `awake status` — one JSON line |
-| **Keep the Mac awake** | ⌥-click the icon, or `Keep Awake ▸` in the menu — with a battery release point and a hard 5% floor | `caffeinate -i -w <pid>` bound to the job itself; not this app |
-| **Change the look** | `Display Mode ▸`, `Runner Preset ▸`, `Selected Metric ▸` | `awake --preset … --display … --load-source …` (applied live) |
+| **Keep the Mac awake** | ⌥-click the icon, or the menu's first row (`Start Keep Awake` / `Stop Keep Awake`), with durations under `Keep Awake For ▸` — with a battery release point and a hard 5% floor | `caffeinate -i -w <pid>` bound to the job itself; not this app |
+| **Change the look** | `Settings ▸ Display Mode ▸` / `Runner Preset ▸`; click a readout row to make it the driver | `awake --preset … --display … --load-source …` (applied live) |
 
 Both tracks share one set of unprivileged readers (`TelemetryCore`: Mach, IOKit, IOReport, SMC). No
 root, no `pmset`, no per-process table, no network except the release-tag check.
@@ -75,12 +75,12 @@ Already have the repo checked out? `./awake` from the repo directory works the s
 ## Quick start
 
 ```bash
-awake                                    # start in the menu bar (detached; default preset horse-white)
-awake --preset dog-black --display value # change the look — live, if it is already running
-awake snapshot                           # one JSON line of hardware readings, then exit
-awake status                             # is an instance up, is it holding the Mac awake
-awake presets                            # the built-in preset keys
-awake --help                             # the one full reference
+awake                                      # start in the menu bar (detached; default preset horse-white)
+awake --preset horse-black --display value # change the look — live, if it is already running
+awake snapshot                             # one JSON line of hardware readings, then exit
+awake status                               # is an instance up, is it holding the Mac awake
+awake presets                              # the built-in preset keys
+awake --help                               # the one full reference
 ```
 
 The first argument is a command; leave it out and it means `start`:
@@ -103,11 +103,11 @@ The first argument is a command; leave it out and it means `start`:
 
 ## What it shows
 
-**One representation at a time** (`--display`, or `Display Mode ▸`): `gif` — the runner, faster under
+**One representation at a time** (`--display`, or `Settings ▸ Display Mode ▸`): `gif` — the runner, faster under
 load (default); `trace` — a 12-slot monochrome sparkline; `value` — a live reading like `CPU 15%` or
 `NET ↓3.4 ↑0.1`. The item's width is fixed per mode, so changing digits never shift the menu bar.
 
-**Ten load sources** (`--load-source`, or `Selected Metric ▸`) choose what drives the animation:
+**Ten load sources** (`--load-source`, or click its readout row in the menu) choose what drives the animation:
 `cpu` (default, with a P/E-cluster split), `memory` (with swap), `bandwidth` (DRAM bus GB/s — usually
 the ceiling for local model inference), `gpu` (with a Renderer/Tiler split), `network`, `disk`, `fan`,
 `battery` (discharge current), `temperature` (hottest die sensor, on a fixed 30–100 °C scale), and
@@ -126,7 +126,7 @@ at login and updates. Its full map and every Keep Awake state are in the
 > [Assets & attribution](#assets--attribution) before forking, packaging, or redistributing;
 > [any GIF of your own](#use-a-custom-gif) works just as well.
 
-Horse (the default, `horse-white`), dog, Chihiro and Totoro, most in white and black silhouettes for
+Horse (the default, `horse-white`), Chihiro and Totoro, most in white and black silhouettes for
 light and dark menu bars. `gifs/presets.json` is the list — `awake presets`, the help and the menu all
 read it, so adding a preset is a GIF plus one manifest entry, no Swift change.
 
@@ -172,8 +172,8 @@ was armed (user intent; `remaining_s` for a timed window). Read-only. Details: [
 
 ## Keep Awake
 
-For a person stepping away. ⌥-click the menu bar item to toggle it, or pick a window from
-`Keep Awake ▸` (30 min to 8 h, custom up to 24 h, until turned off, or until a process exits). From the
+For a person stepping away. ⌥-click the menu bar item (or click the menu's first row) to toggle it, or pick a window from
+`Keep Awake For ▸` (30 min to 8 h, custom up to 24 h, until turned off, or until a process exits). From the
 command line:
 
 ```bash
@@ -199,9 +199,9 @@ A per-user LaunchAgent — no root, no `.app` bundle, no signing. Toggle **Start
 or from the shell:
 
 ```bash
-./scripts/install-login-item.sh                                         # default preset
-./scripts/install-login-item.sh --preset dog-black --load-source memory # bake in launcher args
-./scripts/uninstall-login-item.sh                                       # remove; leaves no residue
+./scripts/install-login-item.sh                                           # default preset
+./scripts/install-login-item.sh --preset horse-black --load-source memory # bake in launcher args
+./scripts/uninstall-login-item.sh                                         # remove; leaves no residue
 ```
 
 It appears under **System Settings → General → Login Items → "Allow in the Background"**. `Exit` from
@@ -213,7 +213,7 @@ the baked-in args.
 
 On launch the app compares your checkout's highest release tag (`git ls-remote --tags origin 'v*'`)
 with its own version — **the only network access it makes**, once per launch, failing silently. A newer
-tag adds `Update available: vX.Y.Z` to the menu. Applying it is always a deliberate click and confirm:
+tag turns the root `Settings` row into `Settings · Update available` and its update row into `Update to vX.Y.Z…`. Applying it is always a deliberate click and confirm:
 `git pull --ff-only` (never `--force`), compile while the app keeps running, then **Restart**. Your
 Keep Awake window, display mode, battery threshold and tint carry over. Disable the check with
 `--no-update-check` or `CO_AWAKE_UPDATE_CHECK=0`.
@@ -329,8 +329,7 @@ All rights remain with their respective owners:
   `totoro-group-black.gif` — "Totoro" and related characters © Studio Ghibli.
 - `chihiro-walk.gif`, `chihiro-walk-white.gif`, `chihiro-walk-black.gif` — "Chihiro" (Spirited Away)
   © Studio Ghibli.
-- `running-horse-black.gif`, `running-horse-white.gif`, `running-dog-white.gif`,
-  `running-dog-black.gif` — animal silhouettes from public sources (original authorship unverified).
+- `running-horse-black.gif`, `running-horse-white.gif` — animal silhouettes from public sources (original authorship unverified).
 
 **Third-party code.** `ThroughputScaler` — the adaptive ceiling that normalizes unbounded rate
 sources (network, disk, swap, battery draw) — is a Swift port of the auto-scale logic in

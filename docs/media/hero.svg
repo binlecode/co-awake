@@ -101,7 +101,7 @@ l-37 -30 -128 2 c-171 2 -279 -9 -317 -32 -18 -11 -50 -19 -76 -19 -55 0 -92
 
   <!-- ===== wordmark + tagline ===== -->
   <text x="62" y="190" font-family="Georgia,'Times New Roman',serif" font-size="50" font-weight="700" fill="#141821">MenuBar Load <tspan fill="#C9812A" font-style="italic">Runner</tspan></text>
-  <text x="64" y="232" font-family="ui-sans-serif,-apple-system,Helvetica,Arial,sans-serif" font-size="20" fill="#5C5749">A dog, a horse, a soot sprite — trotting in your</text>
+  <text x="64" y="232" font-family="ui-sans-serif,-apple-system,Helvetica,Arial,sans-serif" font-size="20" fill="#5C5749">A horse, a soot sprite — trotting in your</text>
   <text x="64" y="260" font-family="ui-sans-serif,-apple-system,Helvetica,Arial,sans-serif" font-size="20" fill="#5C5749">menu bar, sprinting when the machine is under load.</text>
   <text x="64" y="304" font-family="ui-monospace,'SF Mono',Menlo,monospace" font-size="15" fill="#8A8570" letter-spacing="0.5">cpu&#160;&#183;&#160;memory&#160;&#183;&#160;gpu&#160;&#183;&#160;network&#160;&#183;&#160;disk&#160;&#183;&#160;fan</text>
 </svg>

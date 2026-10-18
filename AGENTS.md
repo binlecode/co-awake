@@ -97,7 +97,7 @@ This file provides guidance to Claude Code (claude.ai/code) and all coding agent
 # 启动与运行（首参是动词，缺省即 start；start 幂等：已有实例则把设置转发给它）
 ./awake                          # start：已保存设置或默认预设，后台脱离终端运行
 ./awake --foreground             # 前台运行（查看 stderr / print 输出）；已有实例时报错
-./awake --preset dog-black --display value   # 指定预设 + 状态栏数值读数（运行中即热切换）
+./awake --preset horse-black --display value # 指定预设 + 状态栏数值读数（运行中即热切换）
 ./awake --load-source bandwidth  # 以 DRAM 总线带宽 (GB/s) 驱动动画
 ./awake snapshot                 # 单行 JSON 快照（物理单位），随即退出；无 GUI / 无 state.json / 无编译
 ./awake status                   # 单行 JSON：是否有常驻实例、Keep Awake 状态
@@ -125,7 +125,7 @@ tests/qa.sh                                 # 全量回归测试（需要活跃 
 tests/qa.sh --launcher                       # 包含启动器单例与原子替换破坏性测试（会 pkill 实例）
 
 # 开机自启 LaunchAgent（基于 scripts/ 已有脚本，勿手写 plist）
-./scripts/install-login-item.sh [flags]            # 安装并启动用户 LaunchAgent（如 --preset dog-black）
+./scripts/install-login-item.sh [flags]            # 安装并启动用户 LaunchAgent（如 --preset horse-black）
 ./scripts/uninstall-login-item.sh                  # 卸载 LaunchAgent
 
 # 进程清理

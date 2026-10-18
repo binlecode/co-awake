@@ -14,7 +14,7 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. Run `awake dog-black --label value`
+        1. Run `awake --preset horse-black --display value`
         2. Open the menu
         3. ...
   - type: input

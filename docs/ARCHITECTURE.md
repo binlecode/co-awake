@@ -1,6 +1,6 @@
 # ARCHITECTURE — As-Built System Architecture & Technical Specifications
 
-> **Canonical as-built architecture document for co-awake (v3.0.0).**
+> **Canonical as-built architecture document for co-awake (v3.1.0).**
 > **Source ground truth:** `CoAwake.swift`, `co-awake` (launcher), `gifs/presets.json`.
 > **Scope:** Complete architectural specifications, subsystem topologies, concurrency models, telemetry algorithms, and system invariants.
 
@@ -278,7 +278,17 @@ split reads the array already in hand rather than opening a second IOReport subs
 default source's every tick.
 
 A machine that publishes no cluster map (Intel, and anything else that answers none) has no split:
-the menu clause is omitted and the snapshot keys are absent. The whole-machine figure is unaffected.
+the `Diagnostics ▸` CPU row is hidden and the snapshot keys are absent. The whole-machine figure is unaffected.
+
+**The split is a smoothed series, not this tick's point read.** When a tick's per-cluster delta fails
+(`busy(...)` returns nil), `smooth(nil, into:)` returns the previous smoothed value unchanged, and
+`hasSample` means "a smoothed value has been formed", not "this tick succeeded". Neither the menu nor
+`snapshot` can therefore tell a split computed this tick from one carried over; both read the same
+fields, so they agree with each other (§ 4.7).
+
+| Module / Boundary | Owns | Not its business |
+|---|---|---|
+| `CPULoadMonitor` | The total and the P/E split, their smoothing, and the one validity flag both consumers read | Per-tick freshness of the split. Proving "this tick" needs a sample generation counter, or clearing the value on a failed delta. Either one is a reader semantics change that also changes when the split keys are absent from `snapshot` (`cpu_p_pct` / `cpu_e_pct`). A display layer must not invent its own freshness test beside the reader's. Reopen if a field case shows cluster deltas failing for minutes while a stale split is still displayed, or if a `snapshot` consumer needs per-sample freshness. The change then belongs inside this reader. |
 
 ### 4.2 Composite Memory & Swap Monitoring (`MemoryLoadMonitor`)
 
@@ -449,7 +459,7 @@ Battery telemetry operates across two distinct time domains to honor the unprivi
    - **Strict Zero-Polling Invariant**: Health diagnostics are **never** queried in the background 2s telemetry loop or vsync game loop.
    - **Menu-Gated Single Read**: Queried unprivileged from `AppleSmartBattery` via `IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBattery"))` strictly once on `menuWillOpen(_:)`, and cleared on `menuDidClose(_:)`.
    - **Normalizations**: Automatically maps Apple Silicon normalized `MaxCapacity` percentages (0..100) and legacy Intel raw mAh capacities against `DesignCapacity`. Computes service recommendation conditions when health falls below 80% or `PermanentFailureStatus != 0`.
-   - **Presentation**: Enriches the battery status row (`Battery: 80% · AC · 100% health · 113 cycles`), `stateItem` (`Battery State: Normal · 8478/8579 mAh`, replacing the drain band while the menu is open), and provides multi-line AppKit tooltips with granular mAh capacities.
+   - **Presentation**: While loaded, adds health and cycles to the `Diagnostics ▸` battery row (`Battery: AC · 100% health · 113 cycles`), puts the condition and capacity into the status item's VoiceOver label (`Normal · 8478/8579 mAh`), and provides the root battery row's multi-line tooltip with granular mAh capacities. The root row itself stays one primary value (`Battery: 80%`).
    - **Graceful Desktop Omission**: On AC-only desktop Macs lacking an `AppleSmartBattery` service, the reader cleanly returns `nil`, and the menu seamlessly preserves standard desktop AC status with zero visual defects or overhead.
    - **Observability without behavior change**: `CO_AWAKE_LOG_BATTERY_DIAGNOSTICS=1` prints one line at launch and one per menu open. It reads a throwaway copy and never assigns the cached field, so the hook cannot make the menu render the diagnostics branch at a moment the menu was never open — the reason it is not wired into `sampleSystemLoad()` where the other `LOG_*` hooks sit.
 
@@ -659,7 +669,7 @@ The engine reduces its own footprint under thermal or battery strain.
   - Memory Pressure is `.warning` or `.critical` (`DispatchSource.makeMemoryPressureSource`)
 - **Action:** Speed multiplier is capped at `Tuning.constrainedSpeedCeilingFraction` ($0.5\times$ range midpoint). Immediate recalculation bypasses standard 2s hysteresis.
 
-**Kernel throttling is a separate fact from this self-throttling, and the menu states them separately.** `KernelThermalPressure` maps `ProcessInfo.thermalState` to a level and annotates the *temperature* row with `· Thermal Throttling` at `.serious` / `.critical`, replacing the sensor count rather than extending the row. Three constraints shape it:
+**Kernel throttling is a separate fact from this self-throttling, and the menu states them separately.** `KernelThermalPressure` maps `ProcessInfo.thermalState` to a level and annotates the root *temperature* row with `· Thermal Throttling` at `.serious` / `.critical`, after the primary value (`Temperature: 72 °C · Thermal Throttling`, and after `≤30 °C` too). The sensor spread lives in `Diagnostics ▸` and is not repeated. Three constraints shape it:
 
 - **Level only, never a percentage.** Apple Silicon manages clocks on-die via CLPC and publishes no unprivileged frequency cap: `IOPMCopyCPUPowerStatus` answers `kIOReturnNotFound` (probed on M4 Max; `pmset -g therm` agrees). Intel's `CPU_Speed_Limit` is excluded from the build: no Intel hardware is available to this project, so both the IOKit read and the row it would annotate would ship unverified — and § 4.3's claim that `Tp**` discovery spans Intel is itself untested here (`floatKey` accepts only `flt `-typed keys, so an Intel Mac may answer with a different type rather than a different name). Deriving a percentage from a discrete level would be a fabricated reading.
 - **No new telemetry source, no new timer, no new sample.** It reads a property the app already observes, inline in `refreshMenuMetrics()` — so it is evaluated on that method's existing cadence (the 2s tick and `menuWillOpen`) and adds no cache, no timer of its own, and no IOKit call.
@@ -732,39 +742,20 @@ plain click and the slot carries `handleStatusItemClick(_:)` the rest of the tim
             |                                     |
             v                                     v
   toggleKeepAwakeQuick()                 presentInfoMenu(from:)
-```
-        (no menu is ever shown)                  item.menu = infoMenu
-                  |                              button.performClick(nil)   <- modal
-                  v                              item.menu = nil            <- on close
-        arm/disarm via the submenu's                       |
-        own two functions (§ 7.6)                          v
-                                                 menuWillOpen / menuDidClose
-                                                 fire unchanged (delegate is
-                                                 on the menu, not the item)
-```
-
-- **Why not `popUpMenu(_:)`:** it does the same job without the attach/detach, but has been deprecated
-  since macOS 11 and this build is gated warning-clean (`tests/qa.sh` § 1).
-- **No re-entrancy:** `NSStatusItem` intercepts `performClick` below target/action, so the popup does not
-  re-invoke `handleStatusItemClick`. The button's target/action also survives attaching and detaching
-  `menu`, so there is nothing to re-wire — both verified against the real AppKit on macOS 26, not assumed
-  (the delegate is on the `NSMenu`, not the `NSStatusItem`).
-
-### 6.4 Negative Space & Boundary Contracts
-
-| Design / Feature | Decision | Why Not (Physical / Kernel / WindowServer Reality) | Protected Invariant | Re-Proposal Condition |
-|---|---|---|---|---|
-| **Dual-Slot Menu Bar Item (`labelItemLeft`/`Right`)** | DECLINED | WindowServer owns status-item screen placement and offers no relative group-pinning API. On saturated/notched menu bars, macOS scatters adjacent items, interleaving foreign menu items between icon and label. Furthermore, an idle length-0 item still consumes ~16 pt of system margin. | Zero scatter; zero lateral jitter; single-item minimal status bar footprint. | macOS provides an official, non-deprecated API to atomically pin and group multiple status items together. |
-| **Custom Text Labels (`--label <text>`)** | DECLINED | Arbitrary user string labels introduce non-telemetry visual noise into a dedicated load-monitoring utility, requiring modal prompt dialogs, character length clamps, and complex string sanitization. | Zero non-telemetry noise; single-purpose load visualization. | An explicit multi-instance identification use case that cannot be addressed via preset choice or standard OS notifications. |
-| **Left / Right Slot Position Selection** | DECLINED | Position selection was an artifact of the dual-slot model. With a single unified status item, there is no neighbor to order against. | Interface minimalism; zero redundant configuration knobs. | Multi-slot architecture is reintroduced under a verified grouping API. |
-        (no menu is ever shown)                  item.menu = infoMenu
-                  |                              button.performClick(nil)   <- modal
-                  v                              item.menu = nil            <- on close
-        arm/disarm via the submenu's                       |
-        own two functions (§ 7.6)                          v
-                                                 menuWillOpen / menuDidClose
-                                                 fire unchanged (delegate is
-                                                 on the menu, not the item)
+  (no menu is ever shown)                item.menu = infoMenu
+            ^                            button.performClick(nil)   <- modal
+            |                            item.menu = nil            <- on close
+            |                                     |
+            |                                     v
+            |                            menuWillOpen / menuDidClose
+            |                            fire unchanged (delegate is
+            |                            on the menu, not the item)
+            |                                     |
+            +------- menu's first row <-----------+
+                     (Start / Stop Keep Awake)
+                               |
+                               v
+            armKeepAwake(with:) / disarmKeepAwake()   (§ 7.6)
 ```
 
 - **Why not `popUpMenu(_:)`:** it does the same job without the attach/detach, but has been deprecated
@@ -773,12 +764,75 @@ plain click and the slot carries `handleStatusItemClick(_:)` the rest of the tim
   re-invoke `handleStatusItemClick`. The button's target/action also survives attaching and detaching
   `menu`, so there is nothing to re-wire — both verified against the real AppKit on macOS 26, not assumed
   from the widely-copied idiom, which asserts the opposite.
+- **Two triggers, one path:** Option-click and the menu's first row both call `toggleKeepAwakeQuick()`.
+  There is no second on/off implementation anywhere in the menu (§ 7.6).
 - **Modifier exclusivity:** the toggle requires *exactly* `.option` on `leftMouseUp`. Right-click and
   Control-click stay the conventional "show me the menu" gesture and must never arm anything; Command is
   left untouched so the system keeps its own drag-to-rearrange modifier.
 - **Accepted cost:** an attached `menu` opens on mouse-*down*; an action fires on mouse-*up*. The dropdown
-  therefore now appears on release rather than on press. This is the price of reading the modifier at all,
+  therefore appears on release rather than on press. This is the price of reading the modifier at all,
   and it is the same trade every status-bar app that supports modifier clicks makes.
+
+### 6.4 Negative Space & Boundary Contracts
+
+| Design / Feature | Decision | Why Not (Physical / Kernel / WindowServer Reality) | Protected Invariant | Re-Proposal Condition |
+|---|---|---|---|---|
+| **Dual-Slot Menu Bar Item (`labelItemLeft`/`Right`)** | DECLINED | WindowServer owns status-item screen placement and offers no relative group-pinning API. On saturated/notched menu bars, macOS scatters adjacent items, interleaving foreign menu items between icon and label. Furthermore, an idle length-0 item still consumes ~16 pt of system margin. | Zero scatter; zero lateral jitter; single-item minimal status bar footprint. | macOS provides an official, non-deprecated API to atomically pin and group multiple status items together. |
+| **Custom Text Labels (`--label <text>`)** | DECLINED | Arbitrary user string labels introduce non-telemetry visual noise into a dedicated load-monitoring utility, requiring modal prompt dialogs, character length clamps, and complex string sanitization. | Zero non-telemetry noise; single-purpose load visualization. | An explicit multi-instance identification use case that cannot be addressed via preset choice or standard OS notifications. |
+| **Left / Right Slot Position Selection** | DECLINED | Position selection was an artifact of the dual-slot model. With a single unified status item, there is no neighbor to order against. | Interface minimalism; zero redundant configuration knobs. | Multi-slot architecture is reintroduced under a verified grouping API. |
+| **A separate "which source drives it" submenu beside read-only readout rows** | DECLINED — the readout row *is* the selector (§ 6.5) | The same ten-source list shown twice is two entry points for one decision. The accepted cost is a misclick: a click on a different row runs `setLoadSource`, which clears `loadHistory` (sources differ in unit — %, GB/s, RPM, °C, W — so a normalized history cannot be spliced across them), resets the sample baseline, re-derives speed and persists the new source. Clicking back does not restore the cleared trace, and the change can be invisible (fixed `--speed-multiplier`, similar load, frozen display). Bounded because the trace holds `loadHistoryCapacity` (12) samples at 2 s — about 24 s, rebuilt by itself — and a click on the already-selected row is a no-op (`selectLoadSource` and `setLoadSource` both guard `source != activeLoadSource`). | One action, one entry point. | The trace window grows to minutes, or any non-rebuildable accumulator (a long-window mean) is added, so a misclick stops costing "about 24 s". |
+| **Sorting or hiding readout rows by live value** | DECLINED | While the menu is open, `refreshSourceListState()` rewrites titles every `loadSampleInterval` (2 s). A reorder in the same write swaps the `NSMenuItem` under the pointer for a different source; with clickable rows that is a wrong driver selection plus the history clear above. | Click targets do not move while the menu is open. | AppKit offers a native "freeze order while tracking, reorder on next open" mechanism, measured at zero displacement during tracking. |
+| **Keep Awake first row as an `NSSwitch` custom view** | DECLINED | An `NSMenuItem` with a `view` leaves standard target/action dispatch and menu keyboard navigation (arrows + Return), does not close the menu on click, and needs a hand-written AX role — a second interaction model inside one menu. | Standard `NSMenuItem`s only; keyboard and VoiceOver take AppKit's default path. | macOS ships a native, non-custom-view toggle menu item API. |
+| **Hiding `Runner Preset ▸` outside GIF mode** | DECLINED | `selectPreset` switches a non-GIF display back to `.gif`, so choosing a preset shows its effect at once. Hiding it costs two menu round trips (Display Mode → Runner GIF, menu closes, reopen → Runner Preset). | A preset is always discoverable and takes effect in one click. | A preset must stop implying the display mode (e.g. presets start styling the trace). |
+| **Disabling the busy update row with `isEnabled = false`** | DECLINED — the row gets `action = nil` instead (§ 9.2) | `infoMenu` and its submenus keep `autoenablesItems`, so AppKit recomputes enabled state from target/action every time a menu is shown or tracked and overwrites a hand-set `isEnabled`. An action-less item is the one state automatic validation always reports as disabled, independent of timing. A global `validateMenuItem(_:)` would do it too, but it is the validation point for every self-targeted item in the menu — blast radius of the whole menu for one row. | Busy states cannot be clicked into; no app-wide validation hook. | The menu turns off `autoenablesItems`, or a second row needs phase-dependent enablement. |
+
+### 6.5 Dropdown Menu Layering
+
+The menu answers two questions at two altitudes. **The root holds what you glance at and what you do
+daily** — one primary value per telemetry row, the Keep Awake switch. **The second level holds splits
+and rarely changed settings.** Every row is a standard `NSMenuItem`.
+
+```
+  +--------------------------------------------------+
+  | Stop Keep Awake . 29:58 left                     |  <- first row: state + toggle (§ 7.6)
+  | Keep Awake For                                 > |  <- durations, status row, release threshold
+  |--------------------------------------------------|
+  | * CPU: 12%                                       |  <- 10 readout rows = one radio group
+  |   Memory: 64%                                    |     click -> setLoadSource
+  |   ...                                            |     unavailable source -> row hidden
+  |   ANE: 0.31 W                                    |
+  |   -> Slowing animation - thermal                 |  <- only while self-throttling (§ 5.2)
+  |--------------------------------------------------|
+  | Diagnostics                                    > |  <- assertions, splits, animation speed
+  | Settings                                       > |  <- "Settings . Update available" when a
+  |--------------------------------------------------|     newer tag is known (§ 9.2)
+  | About                                            |
+  | Exit                                         Q   |
+  +--------------------------------------------------+
+  ( * = selectionMarkImage dot, . = middle dot, -> = hook arrow )
+```
+
+- **Reading is selecting.** The readout rows are the driving-source radio group: `action =
+  selectLoadSource(_:)`, `tag = source.rawValue`, the global `selectionMarkImage` dot as `onStateImage`,
+  exactly one available source `.on`. The click goes through the unchanged `setLoadSource(_:)` — the
+  same setter runtime forwarding uses (§ 8.4) — and the menu closes by AppKit default. The cost and why
+  it is accepted are in § 6.4.
+- **Row order is fixed** (`LoadSource.allCases`), never by value (§ 6.4): titles change every 2 s while
+  the menu is open; positions never do.
+- **One primary value per root row.** Which half of the chip, which pipeline stage, which fan — those
+  splits live one level down (§ 8.1), and so does the animation multiplier. The selection mark already
+  says which row drives the animation, so the row needs no "active" suffix.
+- **`Diagnostics ▸`** holds the sleep-assertion view (§ 7.3), one split row per source that has one, and
+  `Animation Speed` (`1.25x (auto)` / `(fixed)`). Its rows are written in the same `refreshSourceListState()`
+  pass as the root rows, so the two levels cannot disagree.
+- **`Settings ▸`** holds Display Mode, Runner Preset, Indicator Bar Tint, Start at Login and the single
+  update row (§ 9.2). `Runner Preset ▸` is shown in every display mode (§ 6.4). Submenu items get
+  `target = self` explicitly: the root-level target wiring does not reach into submenus.
+- **Refresh cadence:** no menu-specific timer. Readouts follow `refreshMenuMetrics()` (2 s tick +
+  `menuWillOpen`); the first row's countdown follows the existing 1 s ticker (§ 6.2), which runs in
+  `.common` run-loop mode and therefore keeps firing while the menu is tracking.
+
+---
 
 ---
 
@@ -840,7 +894,7 @@ Sleep inhibition integrates directly into the visualizer while observing system-
                         |                                             |
              [Clock Expiry / Disarm]                       [Target Process Exits]
              Timer countdown reaches zero                  DispatchSourceProcess (.exit)
-             or user clicks Off/Option-click               or 2s fallback kill(target, 0)
+             or Stop row / Option-click                    or 2s fallback kill(target, 0)
                         |                                             |
                         +----------------------+----------------------+
                                                |
@@ -857,12 +911,13 @@ Sleep inhibition integrates directly into the visualizer while observing system-
 - **Subprocess Execution:** Spawns `/usr/bin/caffeinate -di -w <app_pid> [-t <seconds>]`.
 - **Display + Idle Sleep:** Uses `-di` (preventing display and idle sleep).
 - **Intent vs Running State:** `SleepPreventer` maintains `isEnabled` (user intent) separately from `isRunning` (child process active). When suspended by low battery or thermal events, intent remains set, and the child respawns automatically when conditions normalize.
-- **Menu Bar Countdown Display:** Windowed assertions display a real-time seconds-resolution countdown on the active status item slot (see § 6.3).
+- **Menu Bar Countdown Display:** Windowed assertions display a real-time seconds-resolution countdown on the active status item slot (see § 6.2).
 
 ### 7.2 Safety Floor & Configurable Thresholds
 
-- **Configurable Battery Release:** Defaults to 20% (`Tuning.batteryLowThresholdDefault`), adjustable via CLI `--battery-threshold` or menu. The accepted range is **6%–100%** (`Tuning.batteryThresholdMin`…`batteryThresholdMax`), or `Never` / `0`; the menu offers 10 / 15 / 20 / 30% as rows plus `Custom…` for any whole percent in range. The minimum sits **above** the 5% floor on purpose, so no setting can reach it.
+- **Configurable Battery Release:** Defaults to 20% (`Tuning.batteryLowThresholdDefault`), adjustable via CLI `--battery-threshold` or `Keep Awake For ▸ Battery Release Threshold ▸`, whose parent row carries the current value (`: 20%` / `: Never`) and a tooltip stating that the 5% release still applies — under `Never` too. The accepted range is **6%–100%** (`Tuning.batteryThresholdMin`…`batteryThresholdMax`), or `Never` / `0`; the menu offers 10 / 15 / 20 / 30% as rows plus `Custom…` for any whole percent in range. The minimum sits **above** the 5% floor on purpose, so no setting can reach it.
 - **5% Hard Critical Floor:** `Tuning.batteryCriticalThreshold` (0.05). If battery drops to $\le 5\%$, all sleep assertions release immediately, overriding manual user overrides.
+- **The 5% floor is not a menu setting.** No threshold row, CLI value or restored state reaches it: `Tuning.batteryThresholdMin` (6%) sits above it and `KeepAwakeSuspension.batteryCritical` is non-overridable by construction. Changing it is a change to this section, never a menu option.
 - **Low Battery Override Floor:** Arming Keep Awake while already below the threshold sets `keepAwakeBatteryOverride`, honoring user intent down to the 5% hard floor. An explicit "arm anyway" override is honored strictly between the configured threshold (e.g. 20%) and 5%; it deliberately never extends below the 5% physical floor into a hard power-off.
 
 ### 7.3 System Assertion Telemetry (`SleepAssertionMonitor`)
@@ -900,10 +955,10 @@ one that costs the job.
   restore path: a binding saves as `enabled: true` with no `deadline`, which is already the one shape
   the restore refuses (§ 8.2). It *is* forwarded across an in-app restart, which does not reboot the
   Mac — the job is still running and its pid still means what it meant a second ago.
-- **The subject is named on every surface** (`Keep Awake: claude (41293)`, and `until claude (41293)
-  exits` in the status row). An unattributable hold is the exact problem § 7.3 exists to fix, and this
+- **The subject is named on every surface** (`Stop Keep Awake · until claude (41293) exits` on the
+  first row, and `until claude (41293) exits` in the status row). An unattributable hold is the exact problem § 7.3 exists to fix, and this
   app must not become that for its own.
-- **A pid is not something a user has by hand,** so the menu prompt (`Keep Awake ▸ Until a process
+- **A pid is not something a user has by hand,** so the menu prompt (`Keep Awake For ▸ Until a process
   exits…`) takes a pid *or* a name, resolving a name to the newest match among the calling user's own
   processes (`ProcessProbe.newestMatch`, via `KERN_PROC_UID` + `proc_pidpath`). Newest is the right
   tie-break for the case this exists for — the job just started — and the pid it settled on is then
@@ -919,49 +974,114 @@ one that costs the job.
 - **Unprivileged Clamshell Sleep Boundary:** Subprocess `caffeinate -di -w <pid>` cannot prevent clamshell (closed-lid) sleep on battery power. Inhibiting clamshell sleep on battery requires mutating system-wide NVRAM power settings via root-privileged `pmset disablesleep`, which violates the unprivileged execution tenet and risks leaving sleep permanently disabled on crash. Supported closed-lid operation requires Apple's standard clamshell conditions (AC power + external display).
 - **Persistent-Only Notification Boundary:** State transitions (such as battery suspension) are conveyed exclusively via the status item's persistent dimmed track line (§ 7.2). Transient HUD panels and system notifications are excluded: transient panels are missed during unattended operation, and native notifications require an application bundle. Re-proposal requires an unbundled, non-obtrusive mechanism that does not miss unattended background events.
 
-### 7.6 Option-Click Quick Toggle
+### 7.6 Quick Toggle: the First Row and Option-Click
 
-Option-clicking any of the three status item slots (§ 6.4) arms or disarms Keep Awake without opening
-the dropdown, matching the modifier-click convention of the system's own Wi-Fi and Battery items.
-
-The gesture is deliberately a **shortcut through** the submenu's two existing paths, never a second
-implementation of them — `toggleKeepAwakeQuick()` calls `armKeepAwake(with:)` and `disarmKeepAwake()`,
-the same functions the duration rows and the `Off` row call. That is what makes every guarantee below
+Keep Awake has one switch with two triggers: the menu's **first row** and **Option-click** on the status
+item (§ 6.3), matching the modifier-click convention of the system's own Wi-Fi and Battery items. Both
+call `toggleKeepAwakeQuick()`, a thin shell over `armKeepAwake(with:)` and `disarmKeepAwake()` — the
+same functions the `Keep Awake For ▸` duration rows use. That is what makes every guarantee below
 inherited rather than re-argued:
 
 - **The 5% floor still holds.** Arming routes through `updateSleepPrevention()` →
   `SleepPreventer.applyConditions(suspend:)`, and `KeepAwakeSuspension.batteryCritical` is not
   overridable by construction. No gesture can reach past it (§ 7.2).
-- **The battery-override rule is unchanged.** The gesture passes `isUserGesture: true`, so it grants the
-  arm-anyway override on exactly the same condition a menu click does: only while an overridable
+- **The battery-override rule is unchanged.** Both triggers pass `isUserGesture: true`, so they grant the
+  arm-anyway override on exactly the same condition a duration click does: only while an overridable
   suspension is actually in force.
 - **Single-writer persistence holds.** Both branches end in `persistState()` (§ 8.2).
 - **The window is never invented.** The toggle arms `keepAwakeSelectedDuration` as it stands, which is
   `.indefinite` unless a window is live — disarming runs `clearKeepAwakeWindow()`, which resets the
-  selection to `.indefinite`, the same default the submenu's first duration row carries. There is no
-  separate "last duration" memory and no state added to `state.json`.
+  selection to `.indefinite`. There is no separate "last duration" memory and no state added to
+  `state.json`.
 
-`disarmKeepAwake()` exists so that "off" has exactly one meaning across both surfaces: intent withdrawn,
+`disarmKeepAwake()` exists so that "off" has exactly one meaning across every surface: intent withdrawn,
 any armed window dropped, any process binding released, and the arm-anyway override withdrawn with them.
+There is no `Off` row; the first row is the only menu path to it.
 
-**Verification boundary:** the gesture itself is not machine-testable here. Injecting a modified click
-needs `CGEvent` posting under an Accessibility (TCC) grant, and every observability hook in this project
-exists precisely to avoid requiring one. Its *effects* are covered — the arm and disarm paths are the
-same ones `tests/qa.sh` § 3a/§ 3f already drive — but that Option-click, plain click and right-click each
-route correctly is an eyes-and-hands check in the manual walk (§ 13), not a scripted assertion.
+**The first row's title is composed, not chosen.** Three independent facts can be true at once, so the
+title is built segment by segment (`action · [stop condition] · [paused]`) instead of picked from a
+state table where one fact would shadow another:
+
+| Dimension | Values | Read from |
+|---|---|---|
+| Intent | off → `Start Keep Awake` (no further segments) / on → `Stop Keep Awake` | `sleepPreventer.isEnabled` |
+| Stop condition | timed and not yet due → `29:58 left`; bound → `until claude (41293) exits`; indefinite, or past the deadline → omitted | `keepAwakeDeadline`, `keepAwakeBoundProcessLabel` |
+| Hold | paused → `paused`; holding (including an honored low-battery override) → omitted | `effectiveKeepAwakeSuspension` |
+
+So `Stop Keep Awake · 29:58 left · paused` is one row. A click on any `Stop …` form means exactly one thing,
+withdraw the intent; a row that might arm *or* disarm depending on a hidden state is the ambiguity this
+replaces. Why it is paused is said once, in the `Keep Awake For ▸` status row, not on the first row.
+Re-confirming the low-battery override ("hold anyway") stays on the ticked duration row inside
+`Keep Awake For ▸` (`grantKeepAwakeBatteryOverrideIfOffered()`).
+
+`title` is set before `attributedTitle`, because VoiceOver reads only `title`. Monospaced digits are
+applied only while a countdown ticks; otherwise `attributedTitle` is cleared so a stale countdown render
+cannot keep winning.
+
+**A paused window keeps running out.** A timed window is a wall-clock deadline: a pause kills the
+`caffeinate` child (`SleepPreventer.kill()` detaches its `terminationHandler` first) but neither stops nor
+extends the deadline, so nothing is left to announce expiry while paused. What happens next depends on
+which way the pause ends:
+
+- **Same process, condition clears** (charge rises, threshold lowered): `updateSleepPrevention()`
+  respawns with `keepAwakeRemainingSeconds` floored at 1 s — `caffeinate -t 1`. It exits about a second
+  later, its `terminationHandler` clears `isEnabled` and persists. An expired window costs at most
+  ~1 s of extra hold, never an indefinite one.
+- **Restart:** `applyLaunchKeepAwakeState()` restores only a deadline still in the future, so an expired
+  window does not come back and nothing is spawned. A finished window must not revive in a new process.
+
+**Known limitation:** between the deadline passing and the condition clearing, within one process, the
+intent still reads on (`Stop Keep Awake · paused`, no countdown) and the menu does not say the window
+has ended. The menu only renders this. Ending the intent at the deadline while paused would need the app
+to own a deadline event of its own during a pause — a change to this section's lifecycle, never to a
+menu refresh function. Reopen when an expired-while-paused intent is observed to mislead a user or an
+agent reading `status`.
+
+**Verification boundary:** neither trigger is machine-testable here. Injecting a modified click or
+reading the first row's title needs Accessibility (TCC), and every observability hook in this project
+exists precisely to avoid requiring one. Their *effects* are covered — the arm and disarm paths are the
+same ones `tests/qa.sh` § 3a/§ 3f drive, and the paused / bound / expired-while-paused lifecycles are
+asserted on `LOG_AWAKE` and `state.json` — but the routing of Option-click, plain click and right-click,
+and the composed title, are hands-on checks in the manual walk (§ 13).
 
 ---
 
 ## 8. In-Menu Dashboard & State Persistence
 
-### 8.1 Live Sparkline View (`LoadHistoryView`)
+### 8.1 In-Menu Readouts
 
-- Implemented as an `NSView` inside the status dropdown menu.
-- Holds a circular buffer of 30 samples $\times$ 2s tick $\approx$ 60 seconds of history (`Tuning.loadHistoryCapacity`).
-- Draws color-coded vertical bars:
-  - Green: Load $< 0.30$ (`Tuning.cpuStateLowThreshold`)
-  - Yellow: Load $0.30 \le x < 0.70$
-  - Red: Load $\ge 0.70$ (`Tuning.cpuStateMediumThreshold`)
+Each root readout row is `usageLineText(for:)`, which returns **one primary figure** per source
+(`CPU: 12%`, `Network: ↓1.2 ↑0.3 MB/s`, `Fan: 2400 RPM` — the fastest fan). It is the only formatter
+for that row: the menu and `LOG_THERMAL`'s `row=` both read it, so a test cannot pass against a string
+the menu never shows. Until a source's first sample it reads `<Source>: warming up...`. Which row drives
+the animation is shown by the selection dot, not by text (§ 6.5).
+
+Two root rows carry more than a number, and both exist for **honesty**:
+
+- **`≤30 °C`** — with every cluster parked no sensor answers, and the reader parks `currentCelsius` at
+  `Tuning.temperatureFloorCelsius` so the animation has a value. That figure was not measured, so it is
+  shown as an upper bound. The digits come from `currentCelsius`, not a hard-coded 30.
+- **`· Thermal Throttling`** — the kernel is throttling the machine (§ 5.2). That is what the row is
+  watched for at that moment, so it stays on the root row.
+
+**Splits live in `Diagnostics ▸`** via `breakdownText(for:)` (CPU P/E, GPU Renderer/Tiler, swap used/total
+and swap rate, P-core temperature spread and sensor count or `every core cluster parked`, per-fan RPM,
+battery current and health). A split row is visible only when **both** layers hold:
+
+```
+  telemetry.hasSample(source)                <- source-level: any sample at all
+  AND  the reader's own field-level flag     <- per clause: hasSwapSample, hasSwapRateSample,
+                                                non-nil GPU halves / CPU split, non-empty perFan
+```
+
+Both layers are needed because several readers keep their last cache on a failed read: the GPU halves,
+`perFan`, and the swap byte counts all survive a failed sample. A check on value alone (non-nil,
+non-zero) would show a stale split next to a root row that reads `warming up...`. The decision is made
+inside `breakdownText(for:)`, so no caller can skip it. Absent clauses are omitted, never shown as zero.
+These are the readers' own flags, so the menu and `snapshot` share one validity rule (§ 4.7). Their
+limits are the readers' too (§ 4.1 for the CPU split). One is not visible from this layer: if
+`MemoryLoadMonitor` fails at the VM-read step, it returns before touching the swap flags or their cache,
+so after an earlier success those flags can still read true.
 
 ### 8.2 State Persistence (`StateStore`)
 
@@ -1173,6 +1293,19 @@ Built-in preset identities are decoupled from Swift code into `gifs/presets.json
 
 At launch, `JSONDecoder` hydrates `allPresets: [PresetDescriptor]`, determining menu items, keywords, and speed curves dynamically.
 
+- **Unknown or removed keywords: lenient at cold start, strict on forward.** A bareword that is not in the
+  manifest (e.g. a removed keyword still in `state.json` or a LaunchAgent's argv) falls back to
+  `defaultPreset` with a stderr warning naming `awake presets`, and the next `persistState()` overwrites
+  it. A cold start is unattended, so a fatal dialog would have no one to dismiss it and the menu bar
+  would just stay empty. A forwarded `--preset` is a command just typed, so it is checked before
+  anything is spooled: exit 1, naming `awake presets`, and the resident instance is untouched. A **path**
+  (contains `/` or ends in `.gif`) names a concrete file and is never downgraded. A missing file takes
+  the `GIF file not found` path through `showStartupErrorAndQuit()` (exit 0, `tests/qa.sh` § 4).
+
+| Proposal | Decision | Why Not | Protected Invariant | Re-Proposal Condition |
+|---|---|---|---|---|
+| Compatibility aliases mapping removed keywords to surviving presets | DECLINED | An alias is a second entry point, and it splits `presets` output (the valid set) from the keys actually accepted. The cold-start fallback already keeps unattended launches alive. | `presets` output is exactly the set of valid keys; no aliases. | A surviving caller cannot migrate its argv, and unattended launches are broken by the cold-start fallback. |
+
 - **Preset Sourcing Boundary:** Presets are data-driven via `gifs/presets.json` or supplied as a GIF path (`--preset /path/to.gif`). `PresetRegistry` is the one reader of the manifest, shared by the GUI, the `presets` command and the forward path's `--preset` check, and the help lists no preset — the manifest is the list. In-app community asset stores, remote downloaders, and dynamic runtime preset import are excluded to preserve local auditability, offline operation, and the self-contained dotfile philosophy.
 
 ### 9.2 Git-Native In-App Update Engine
@@ -1180,6 +1313,27 @@ At launch, `JSONDecoder` hydrates `allPresets: [PresetDescriptor]`, determining 
 - **Update Probe (`UpdateChecker`):** Executes `git ls-remote --tags --refs origin 'v*'` against the origin remote, comparing the highest strict three-component SemVer against `AppInfo.version`.
 - **Precompile Before Restart (`Builder`):** On user confirmation, runs `git pull --ff-only` followed by `co-awake build`.
 - **Supervisor-Preserving Relaunch (`Restarter`):** Dispatches a detached `/bin/sh` script waiting for the old process PID to terminate, then relaunches via either `launchctl kickstart` (for LaunchAgent jobs) or the original launcher command line.
+- **One update row, phase-driven** (`Settings ▸`). `refreshUpdateStatus()` rewrites the same item's
+  `title`, `action` and `target` on every phase change and clears `attributedTitle`:
+
+  | Phase | Title | Action |
+  |---|---|---|
+  | `.checking` | `Checking for Updates…` | nil (disabled) |
+  | `.building(v)` | `Building vX.Y.Z…` | nil (disabled) |
+  | `.idle`, newer tag known | `Update to vX.Y.Z…` | `promptSelfUpdate` |
+  | `.idle`, otherwise | `Check for Updates…` | `checkForUpdates` |
+  | not a git checkout | row hidden | — |
+
+  A busy row is disabled by having **no action**, not by `isEnabled` (§ 6.4). Behind it,
+  `promptSelfUpdate()` refuses unless `updatePhase` is `.idle`, the same guard `startUpdateProbe` has.
+  Together they close a click that lands in the same run-loop turn as a phase change. When a newer tag
+  is known, the root row reads `Settings · Update available`. That is the only promotion: no icon, no
+  pop-up.
+- **Accepted cost: no re-check once a newer tag is known.** The row offers `Update to vX.Y.Z…` instead of
+  `Check for Updates…`, so a tag published later is not shown until the next launch probe. The update
+  still lands current code, because `git pull --ff-only` pulls the remote as it is now. The
+  `Building vX.Y.Z…` title shows the tag known when the prompt was confirmed (`latestKnownVersion`),
+  which can be older than what the pull fetched (from the code path; not measured).
 - **Update Frequency Boundary:** Update checks execute strictly on launch (`UpdateChecker`) and on user demand via the menu. Background periodic polling timers are excluded to avoid unnecessary network activity and timer lifecycle debt.
 
 ---
@@ -1235,6 +1389,17 @@ Comprehensive reference of values defined in `Tuning`:
 | `labelChartHeight` | `14.0` | Points | Plot height for the menu bar trace chart |
 | `labelChartBarCount` | `12` | Count | Number of visible bar slots in status bar trace chart |
 | `labelChartBarWidth` | `2.6` | Points | Width of individual rounded pill bars in status bar trace chart |
+| `loadHistoryCapacity` | `12` | Samples | Trace window (~24 s at the 2 s tick); cleared on a source change, so it bounds what a readout-row misclick costs (§ 6.4) |
+| `keepAwakeDurations` | `1800 / 3600 / 7200 / 14400 / 28800` | Seconds | Timed rows in `Keep Awake For ▸`, listed before `Until turned off` (§ 7.6) |
+| `keepAwakeMaxHours` · `keepAwakeMaxMinutes` | `24` · `59` | h · min | Upper bound of `Custom…` and of `--keep-awake` |
+| `batteryThresholdRows` | `0.10 / 0.15 / 0.20 / 0.30` | Fraction | Rows of `Battery Release Threshold ▸` (§ 7.2) |
+| `batteryThresholdOff` | `0.0` | Fraction | `Never`: no threshold release; the 5% floor still applies. CLI accepts `off` / `never` / `none` / `no` / `0` |
+| `batteryThresholdMin` · `batteryThresholdMax` | `0.06` · `1.0` | Fraction | Custom threshold range; the minimum sits above the 5% floor |
+| `menuSelectionMarkCapHeightFraction` | `0.6` | Cap-height fraction | Size of the selection dot used by every radio group, including the readout rows (§ 6.5) |
+
+`AppInfo.version` (`3.1.0`) is the version baseline the update probe compares against; it lives in the
+binary and moves with four other surfaces (§ 13). `gifs/presets.json` `defaultPreset` (`horse-white`) is
+the cold-start fallback for an unknown preset keyword (§ 9.1).
 
 ### 11.2 Command-Line Interface (CLI) Parameters
 
@@ -1247,7 +1412,7 @@ The first argument is a verb; omitted, or a flag, means `start`. Settings apply 
 | `snapshot` | — | Verb, no arguments | One JSON line of every hardware reading in physical units (§ 4.7) | launcher & binary |
 | `presets` | — | Verb, no arguments | One JSON line: `default` and each built-in preset's `key` and `title`, in manifest order (§ 9.1) | launcher & binary |
 | `build` | — | Verb, no arguments | Compiles if the source is newer, atomic rename, launches nothing; exit 0/1 (§ 2) | launcher only |
-| `--preset <key\|path>` | saved, else `defaultPreset` | Built-in key (see `presets`) or `.gif` path | Setting: the runner animation | binary |
+| `--preset <key\|path>` | saved, else `defaultPreset` | Built-in key (see `presets`) or `.gif` path | Setting: the runner animation. Unknown key: cold start falls back to `defaultPreset` with a warning; forward exits 1 (§ 9.1) | binary |
 | `--display <mode>` | `gif` (or saved) | `gif` · `trace` · `value` | Setting: status-bar representation (§ 6) | binary |
 | `--load-source <src>` | `cpu` (or saved) | `cpu` · `memory` · `gpu` · `network` · `disk` · `fan` · `battery` · `temperature` · `ane` · `bandwidth` | Setting: the reader driving the animation (§ 4) | binary |
 | `--keep-awake <dur>` | `off` (or saved window) | `off` · `on` · `<dur>` (`30m`, `2h`, `1h30m`; ≤ 24h) | Setting: sleep prevention until off or until the window expires (§ 7.1) | binary |
@@ -1312,8 +1477,8 @@ self-restraint — it only ever reads the system, and the only thing it throttle
 | **v1.17 → v1.19** — from *our* hold to *the machine's* | Other sleep assertions, the machine-hold row, brightness-tracks-the-hold tint | Report the whole truth about sleep, not just this app's part of it (§ 7.3); the submenu's subject-grouped layout |
 | **v1.20** — the sensor tier | A shared `SMCClient` opened fan, then die temperature | The family of hardware readings the app can keep growing through without privileges (§ 4.3) |
 | **v1.21 → v1.22** — restart cost, and standing still | Build-before-restart in the update path; Freeze Animation honoring Reduce Motion | The compile moved out of the window where the app is gone (§ 9.2); a single stop/start decider total over occlusion + freeze (§ 5.1, § 5.3) |
-| **v1.23** — a hold that isn't a guess | Keep Awake bound to a process instead of a clock; the timed window counting down on the menu bar itself | A hold can take its end condition from the job rather than from a guessed duration (§ 7.4); the countdown became a glance, under the same occlusion gate the animation obeys (§ 6.3) |
-| **v1.24** — the gesture, and the battery's own history | Option-click on any slot toggles Keep Awake without the menu; the dropdown reports battery health, cycle count and capacity | The first action reachable without opening anything — routed *through* the submenu's own arm/disarm so the 5% floor and the override rule cannot drift from it (§ 6.4, § 7.6); the first reading the app does not poll at all, gated entirely on menu open (§ 4.6) |
+| **v1.23** — a hold that isn't a guess | Keep Awake bound to a process instead of a clock; the timed window counting down on the menu bar itself | A hold can take its end condition from the job rather than from a guessed duration (§ 7.4); the countdown became a glance, under the same occlusion gate the animation obeys (§ 6.2) |
+| **v1.24** — the gesture, and the battery's own history | Option-click on any slot toggles Keep Awake without the menu; the dropdown reports battery health, cycle count and capacity | The first action reachable without opening anything — routed *through* the submenu's own arm/disarm so the 5% floor and the override rule cannot drift from it (§ 6.3, § 7.6); the first reading the app does not poll at all, gated entirely on menu open (§ 4.6) |
 | **v1.25.0** — the kernel's throttle vs our throttle | Temperature row annotates `· Thermal Throttling` on `.serious`/`.critical` pressure | Clear separation between what the kernel does to the machine (display-only) and what this app does about it (self-throttling), enforced in wiring and display (§ 5.2) |
 | **v3.0.0** — headless contracts, silicon splits & the rename | `--once` JSON snapshot and `TelemetryCore`; DRAM bus bandwidth via `BandwidthLoadMonitor` + CPU P/E cluster & GPU pipeline splits; `--status` app query; renamed to `co-awake` — launcher, env prefix, state path | Telemetry core decoupled from GUI display concepts (§ 4.7); physical rate observation on memory controller bus histograms (§ 4.8); headless non-invasive process and hold inspection (§ 8.3); one name, one env prefix, one state path — no alias, no dual-prefix fallback (§ 8.2) |
 | **v2.1.0** — menu bar trace sparkline | `--label chart` / trace display mode | 12-bar mineral sparkline directly on the status bar slot (§ 6) |
@@ -1370,6 +1535,25 @@ signature, never by name (your own instance holds one legitimately), with `pgrep
 pgrep -fl caffeinate 2>/dev/null | grep -- '-w ' | while read -r _ pid; do
   ps -p "$pid" >/dev/null 2>&1 || echo "  LEAK: caffeinate -w $pid"; done
 ```
+
+**The manual menu walk is a boundary, not a gap to paper over.** Without Accessibility (TCC) a shell
+cannot read an `NSMenu`, and no `LOG_*` hook carries the first row's title, submenu nesting, enabled
+state or selection marks. What *is* scripted is every effect behind them: the setters, the Keep Awake
+lifecycles and the `row=` strings `LOG_AWAKE` / `LOG_THERMAL` print. The structure itself is walked by
+hand with `osascript tests/menu-dump.applescript <pid>`, which recurses to depth 3 and prints each row's
+title, `enabled` and `AXMenuItemMarkChar`. Diff its output before and after a menu change. It proves
+structure, titles and enablement. It does **not** prove the selection dot (a custom `onStateImage`, so
+the mark char is empty and is printed verbatim), VoiceOver speech or keyboard reach; walk those by hand
+and record them. Run it, and any hand-started instance, with an isolated `CO_AWAKE_STATE_FILE`.
+
+| Proposal | Decision | Why Not | Protected Invariant | Re-Proposal Condition |
+|---|---|---|---|---|
+| A `CO_AWAKE_LOG_MENU` hook (or a first-row field on `LOG_AWAKE`) so `qa.sh` can assert menu structure | NOT ADOPTED | A new or widened hook is an interface change to the observability set. What it would close is narrow: first-row text and nesting, whose underlying effects are already asserted. | The hook set stays minimal, read-only and non-writing. | A first-row or submenu text regression ships with `qa.sh` all green, or CI without TCC must assert the first row's text. |
+
+**`tests/qa.sh --launcher` is not in the default release run.** Its cleanup stops instances by name
+(`pkill CoAwake`), which conflicts with only killing PIDs you started, and it would take down the
+developer's own resident instance. Run it only with explicit owner approval, after stopping your own
+instance; switching its cleanup to owned PIDs is separate work.
 
 Don't record the cover's published state in docs — fetch it. A `curl` of the live badge settles it in one command; the flow, including the two
 checks that read as a failed deploy and aren't, is the `publish-cover` skill's.

@@ -14,7 +14,8 @@ GIF supports only **1-bit (on/off) transparency** — no alpha gradient. So *eve
 staircase edges in the file. A preset looks smooth in the menu bar only because the app **downsamples**
 it: `NSImageInterpolation.high` anti-aliases a high-res source on the way down to the ~40px-tall render
 size. A source that is *lower* resolution than the render size gets **upscaled**, which keeps the blocky
-staircase (this is why the 72×34 dog looked jagged next to the 111×74 horse / 120×88 totoro).
+staircase: the interpolator can only blend pixels that exist, so each source pixel becomes a solid
+block of on/off alpha.
 
 **Rule of thumb:** a preset GIF's shorter dimension should be **≥ ~120px** (≈ 3× the menu-bar render
 height) so the app always downsamples. Keep files roughly **≤ ~200KB** (the horse/totoro are 5–26KB;
@@ -23,11 +24,11 @@ result through `gifsicle -O3 --lossy=30`.
 
 ## Tasks
 
-### Make a preset's edges smoother (e.g. the dog)
+### Make a preset's edges smoother
 Raise its source resolution so the app downsamples. Preserves shape, delays, and loop.
 ```bash
-scripts/smooth-gif.sh gifs/running-dog-white.gif gifs/running-dog-white.gif 400%
-scripts/smooth-gif.sh gifs/running-dog-black.gif gifs/running-dog-black.gif 400%
+scripts/smooth-gif.sh gifs/running-horse-white.gif gifs/running-horse-white.gif 400%
+scripts/smooth-gif.sh gifs/running-horse-black.gif gifs/running-horse-black.gif 400%
 ```
 Do it in place (git tracks the diff). Pick a scale that gets the shorter side ≥ ~120px: 400% turns
 72×34 → 288×136. Then verify (below).
@@ -54,7 +55,7 @@ aspect, so full-canvas frames are fine. To confirm a change:
 
 1. **Simulate the menu-bar downsample** and eyeball the edge (no app launch needed):
    ```bash
-   magick "gifs/running-dog-white.gif[0]" -filter Lanczos -resize x40 -background '#333' -flatten tmp/edge.png
+   magick "gifs/running-horse-white.gif[0]" -filter Lanczos -resize x40 -background '#333' -flatten tmp/edge.png
    magick tmp/edge.png -filter point -resize 600% tmp/edge-zoom.png   # magnify to see the stairs
    ```
    Read `tmp/edge-zoom.png` — smooth = grey anti-aliased transition pixels; jagged = hard blocky steps.
@@ -64,7 +65,7 @@ aspect, so full-canvas frames are fine. To confirm a change:
    ```bash
    open docs/cover.html
    ```
-3. **In the app**: `CO_AWAKE_EXIT_AFTER=5 ./awake dog-white --foreground`.
+3. **In the app**: `CO_AWAKE_EXIT_AFTER=5 ./awake --preset horse-white --foreground`.
 
 Sanity-check the rebuilt GIF kept its animation:
 ```bash

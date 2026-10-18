@@ -530,15 +530,19 @@
   .readout-stage .clock{font-variant-numeric:tabular-nums; font-size:12px; opacity:.9; margin-left:10px}
   /* the dropdown "live dashboard" mock */
   .dash{align-self:stretch; background:var(--ink-2); border:1px solid var(--ink-3); border-radius:12px;
-    padding:14px 15px; display:flex; flex-direction:column; gap:12px;
-    box-shadow:0 18px 36px -26px rgba(0,0,0,.85)}
-  .dash .spark{display:flex; align-items:flex-end; gap:3px; height:38px}
-  .dash .spark i{flex:1; border-radius:2px 2px 0 0; background:var(--river); opacity:.9}
+    padding:8px 8px; display:flex; flex-direction:column; gap:2px;
+    box-shadow:0 24px 48px -18px rgba(0,0,0,.75); backdrop-filter:blur(16px)}
+  .dash .dsep{height:1px; background:rgba(255,255,255,.07); margin:4px 6px}
   .dash .drow{display:flex; align-items:center; justify-content:space-between; font-family:var(--mono);
-    font-size:11.5px; color:rgba(236,230,216,.72); border-top:1px solid rgba(255,255,255,.06); padding-top:8px}
-  .dash .drow:first-of-type{border-top:0; padding-top:0}
-  .dash .drow .k{color:rgba(236,230,216,.5); letter-spacing:.04em}
+    font-size:11.5px; color:rgba(236,230,216,.7); padding:5px 8px; border-radius:6px; cursor:default; transition:all .12s}
+  .dash .drow[data-metric]{cursor:pointer}
+  .dash .drow[data-metric]:hover{background:rgba(255,255,255,.06); color:rgba(255,255,255,.95)}
+  .dash .drow.active{background:rgba(130,179,175,.15); color:var(--fg-loud)}
+  .dash .drow.active .k{color:var(--river); font-weight:600}
+  .dash .drow .k{color:rgba(236,230,216,.55); letter-spacing:.02em}
   .dash .drow .v{color:rgba(236,230,216,.92); font-variant-numeric:tabular-nums}
+  .dash .drow-action{font-weight:500}
+  .dash .drow-sub .v{opacity:.45; font-size:11px}
   .readout-stage .caption{font-family:var(--mono); font-size:10.5px; letter-spacing:.06em;
     color:rgba(255,255,255,.6); text-align:center}
 
@@ -614,7 +618,7 @@
   <div class="hero">
     <p class="eyebrow kicker">Native macOS · Menu bar · Swift + AppKit</p>
     <h1>Something small is <em>running</em> in your&nbsp;menu&nbsp;bar.</h1>
-    <p class="lede">A dog, a horse, a soot sprite, Totoro. It trots when the machine is calm and
+    <p class="lede">A horse, a soot sprite, Totoro. It trots when the machine is calm and
       <b>breaks into a sprint when the system is under load</b> — a live, ambient read on CPU,
       memory, DRAM bandwidth, GPU, network, disk, fan, battery, die temperature or the neural engine,
       tucked into the status bar you already stare at.</p>
@@ -725,8 +729,7 @@
           <button type="button" data-mode="trace" aria-pressed="false">Trace Chart</button>
           <button type="button" data-mode="value" aria-pressed="false">Live Value</button>
         </div>
-        <p class="readout-note">…and the dropdown is a live dashboard: a 60-second sparkline, per-source
-          readouts, and load averages — <code>Selected Metric</code> switches what drives it.</p>
+        <p class="readout-note">…and the dropdown gives direct control: one-click Keep Awake, live hardware telemetry — click any readout to choose what drives the runner.</p>
       </div>
       <div class="readout-stage">
         <div class="barmock" role="img" aria-label="A macOS menu bar with a live status item">
@@ -736,13 +739,18 @@
           <span class="runner-slot" id="readoutSlot"><img src="../gifs/running-horse-white.gif" alt="Running horse"></span>
           <span class="clock">Wed 9:41</span>
         </div>
-        <div class="dash" aria-hidden="true">
-          <div class="spark" id="dashSpark"></div>
-          <div class="drow"><span class="k">CPU Usage (smoothed)</span><span class="v" id="dashUsage">47.2% · P 38% · E 56% [Active · 1.38×]</span></div>
-          <div class="drow"><span class="k">Memory</span><span class="v">36% · swap 0.5/2.0 GB</span></div>
-          <div class="drow"><span class="k">GPU</span><span class="v">29% · Renderer 29% · Tiler 15%</span></div>
-          <div class="drow"><span class="k">Memory Bandwidth</span><span class="v">24.3 GB/s</span></div>
-          <div class="drow"><span class="k">Battery</span><span class="v">80% · AC · 100% health · 116 cycles</span></div>
+        <div class="dash" role="menu" aria-label="Simulated co-awake dropdown menu">
+          <div class="drow drow-action"><span class="k">Stop Keep Awake</span><span class="v" style="color:var(--river)">29:58 left</span></div>
+          <div class="drow drow-sub"><span class="k">Keep Awake For</span><span class="v">▸</span></div>
+          <div class="dsep"></div>
+          <div class="drow active" data-metric="CPU 47%"><span class="k">● CPU</span><span class="v" id="dashUsage">47%</span></div>
+          <div class="drow" data-metric="MEM 36%"><span class="k">&nbsp;&nbsp;Memory</span><span class="v">36%</span></div>
+          <div class="drow" data-metric="GPU 29%"><span class="k">&nbsp;&nbsp;GPU</span><span class="v">29%</span></div>
+          <div class="drow" data-metric="BW 24.3G"><span class="k">&nbsp;&nbsp;Memory Bandwidth</span><span class="v">24.3 GB/s</span></div>
+          <div class="drow" data-metric="BAT 80%"><span class="k">&nbsp;&nbsp;Battery</span><span class="v">80%</span></div>
+          <div class="dsep"></div>
+          <div class="drow drow-sub"><span class="k">Diagnostics</span><span class="v">▸</span></div>
+          <div class="drow drow-sub"><span class="k">Settings</span><span class="v">▸</span></div>
         </div>
         <span class="caption" id="labelCaption">flip the display modes — runner GIF, trace chart, or live value</span>
       </div>
@@ -753,7 +761,7 @@
   <section id="cast">
     <div class="sechead">
       <h2>The cast</h2>
-      <span class="n">12 built-in presets</span>
+      <span class="n">10 built-in presets</span>
     </div>
     <div class="presets">
       <div class="card">
@@ -777,15 +785,8 @@
           <div class="row"><span class="range">from Giphy</span><span class="range">0.50–2.60×</span></div>
         </div>
       </div>
-      <div class="card">
-        <div class="stage"><img src="../gifs/running-dog-white.gif" alt="Running dog silhouette"></div>
-        <div class="meta">
-          <div class="row"><span class="title">Dog</span><code>dog-white</code></div>
-          <div class="row"><span class="range">the original runner</span><span class="range">0.50–2.50×</span></div>
-        </div>
-      </div>
     </div>
-    <p class="heroBar cap">…plus Dog (Black), Horse (Black), Chihiro white/black, Totoro white/black, and a wide Totoro group (white/black) — 12 in all. Drop in any <span class="mono">.gif</span> to make your own.</p>
+    <p class="heroBar cap">…plus Horse (Black), Chihiro white/black, Totoro white/black, and a wide Totoro group (white/black) — 10 in all. Drop in any <span class="mono">.gif</span> to make your own.</p>
   </section>
 
   <section id="mark">
@@ -911,23 +912,23 @@
             learn. The slot reserves the full <span class="mono">88:88:88</span> template, so ticking digits
             move nothing around them — and like the animation, it <b>stops entirely when the icon is
             hidden</b> behind the notch, in overflow, or on another Space.</li>
-          <li>Under <span class="mono">This&nbsp;App</span> the submenu is <b>one radio group</b> — Off plus
-            the five tints — so <b>picking a color is the on gesture</b>. Whichever you pick becomes
+          <li>The menu's <b>first row is the switch</b> — <span class="mono">Start Keep Awake</span>, or
+            <span class="mono">Stop Keep Awake · 29:58 left</span> while it runs — the same toggle as
+            ⌥-click. Durations live under <span class="mono">Keep Awake For</span>, and the tint you pick
+            under <span class="mono">Settings</span> becomes
             <a href="#mark">the mark under the icon and on the label</a>.</li>
-          <li><b>And it tells you when something <i>else</i> is holding your Mac awake.</b> The submenu's
+          <li><b>And it tells you when something <i>else</i> is holding your Mac awake.</b> The <span class="mono">Diagnostics</span> submenu's
             first row answers the real question — <span class="mono">Mac held awake — caffeinate · until
             8:18&nbsp;PM</span>, naming the holder, or <span class="mono">Nothing holding sleep</span> — and
             directly below it, <span class="mono">Other&nbsp;Assertions</span> lists every other process
             holding one, as <span class="mono">owner — AssertionType</span>, read from IOKit's public
-            power-management API. So <i>“the app says Off, so why won't my Mac sleep?”</i> has an answer in
-            the menu instead of in <span class="mono">pmset -g assertions</span>. Those two rows are the
-            whole top section, and everything you can <i>click</i> sits below a
-            <span class="mono">This&nbsp;App</span> heading — because they answer different questions, and a
-            ticked <span class="mono">Off</span> is a fact about this app, never a promise about your Mac.
+            power-management API. So <i>“the app isn't holding, so why won't my Mac sleep?”</i> has an answer in
+            the menu instead of in <span class="mono">pmset -g assertions</span>. Those rows sit apart from the Keep Awake switch because they answer a different question: a
+            <span class="mono">Start Keep Awake</span> row is a fact about this app, never a promise about your Mac.
             A hold you didn't start tints the track line
             too — <b>faded</b>, not solid, because only this app's own hold is one that
-            <span class="mono">Off</span>
-            row can release. It reports the <b>observation, never a conclusion</b>: an assertion isn't proof
+            <span class="mono">Stop Keep Awake</span>
+            can release. It reports the <b>observation, never a conclusion</b>: an assertion isn't proof
             the Mac can't sleep, so it names the holder and the raw type and stops there. Read-only —
             there's no button here to kill anyone else's process.</li>
         </ul>
@@ -1052,7 +1053,7 @@
         <div class="fact"><h4>The one reading it refuses to poll</h4><p>Open the menu on a Mac with a battery and it reports <b>health, cycle count and capacity</b> — <span class="mono">100% health · 113 cycles</span>, <span class="mono">Normal · 8478/8579 mAh</span>, with the full breakdown on hover. Read straight from <b><span class="mono">AppleSmartBattery</span></b> in the IORegistry, <b>no privileges, no helper</b>. And unlike every other figure here it is <b>never sampled on a timer</b>: health moves over months, so it's read the moment you open the menu and dropped when you close it. A desktop Mac with no battery sees the menu exactly as it was.</p></div>
         <div class="fact"><h4>Three answers for scripts and agents</h4><p>The core serves headless consumers directly. <span class="mono">snapshot</span> prints every physical reading as <b>one line of JSON</b> (including AC status and kernel memory pressure); <span class="mono">status</span> inspects resident hold state; and <span class="mono">start</span> is idempotent — run against an instance already up, it forwards the settings through a per-request spool and a POSIX signal. Pure unprivileged CLI, zero socket debt.</p></div>
         <div class="fact"><h4>Data-driven presets</h4><p>Keyword, menu title, and speed range all live in <b><span class="mono">presets.json</span></b> (width comes from the GIF's own aspect ratio). Add a preset by editing data — zero Swift changes.</p></div>
-        <div class="fact"><h4>Checks for its own updates</h4><p>On launch it reads your checkout's origin release tags — <b>the only network call the app ever makes</b>. A newer tag shows an <span class="mono">Update available</span> menu item; applying it is a deliberate <b>two-click</b> action (<span class="mono">git pull --ff-only</span>), never automatic. It then <b>compiles the new version while still running</b> — the menu reads <span class="mono">Building v3.0.0…</span> — so the <span class="mono">Restart</span> that follows takes about a second instead of leaving an empty menu bar waiting on a build. Settings and the preset you picked carry over.</p></div>
+        <div class="fact"><h4>Checks for its own updates</h4><p>On launch it reads your checkout's origin release tags — <b>the only network call the app ever makes</b>. A newer tag turns the menu's <span class="mono">Settings</span> row into <span class="mono">Settings · Update available</span>; applying it is a deliberate <b>two-click</b> action (<span class="mono">git pull --ff-only</span>), never automatic. It then <b>compiles the new version while still running</b> — the menu reads <span class="mono">Building v3.1.0…</span> — so the <span class="mono">Restart</span> that follows takes about a second instead of leaving an empty menu bar waiting on a build. Settings and the preset you picked carry over.</p></div>
         <div class="fact"><h4>One line in, one line out</h4><p>Install with a single <span class="mono">curl … | bash</span> — it clones, compiles, and symlinks onto your <span class="mono">PATH</span>; <span class="mono">uninstall.sh</span> reverses exactly what it created. <b>Open source (MIT)</b>, no signing or Homebrew.</p></div>
       </div>
     </div>
@@ -1062,7 +1063,7 @@
     <div class="foot">
       <div class="badges">
         <a class="badge badge-link" href="https://github.com/binlecode/co-awake">github.com/binlecode/co-awake&nbsp;↗</a>
-        <span class="badge">v3.0.0</span>
+        <span class="badge">v3.1.0</span>
         <span class="badge">MIT · open source</span>
         <span class="badge">Swift · AppKit</span>
         <span class="badge">macOS 14+ · display link</span>
@@ -1326,7 +1327,28 @@
     }
     return html;
   }
+  var currentDisplayMode = 'gif';
+  var currentMetricValue = 'CPU 47%';
+  var metricRows = document.querySelectorAll('.dash .drow[data-metric]');
+  metricRows.forEach(function(row){
+    row.addEventListener('click', function(){
+      metricRows.forEach(function(r){
+        r.classList.remove('active');
+        var k = r.querySelector('.k');
+        if (k) k.innerHTML = '&nbsp;&nbsp;' + k.textContent.replace(/^●\s*/, '').trim();
+      });
+      this.classList.add('active');
+      var k = this.querySelector('.k');
+      if (k) k.innerHTML = '● ' + k.textContent.trim();
+      currentMetricValue = this.getAttribute('data-metric');
+      if (currentDisplayMode === 'value' && readoutSlot) {
+        readoutSlot.innerHTML = '<span class="val-text">' + currentMetricValue + '</span>';
+      }
+    });
+  });
+
   function setDisplayMode(mode){
+    currentDisplayMode = mode;
     for(var i=0;i<segBtns.length;i++){
       segBtns[i].setAttribute('aria-pressed', segBtns[i].getAttribute('data-mode')===mode?'true':'false');
     }
@@ -1336,19 +1358,15 @@
       if(labelCap) labelCap.textContent='runner GIF — animated creature whose speed tracks live system load';
     } else if(mode==='trace'){
       readoutSlot.innerHTML='<span class="mini">'+traceBars(12)+'</span>';
-      if(labelCap) labelCap.textContent='trace chart — 12-bar monochrome sparkline tracking the last 60s';
+      if(labelCap) labelCap.textContent='trace chart — 12-bar monochrome sparkline tracking the last ~24s';
     } else if(mode==='value'){
-      readoutSlot.innerHTML='<span class="val-text">CPU 47%</span>';
-      if(labelCap) labelCap.textContent='live value — monospaced real-time reading with zero jitter';
+      readoutSlot.innerHTML='<span class="val-text">' + currentMetricValue + '</span>';
+      if(labelCap) labelCap.textContent='live value — monospaced real-time reading with zero jitter (click any metric below to switch)';
     }
   }
   for(var b=0;b<segBtns.length;b++){
     segBtns[b].addEventListener('click',function(){ setDisplayMode(this.getAttribute('data-mode')); });
   }
   setDisplayMode('gif');
-
-  // dashboard sparkline — a curated 60s trace (green/amber/vermilion by the same load thresholds)
-  var spark=document.getElementById('dashSpark');
-  if(spark) spark.innerHTML=traceBars();
 })();
 </script>

@@ -10,7 +10,7 @@ import QuartzCore
 // Human-facing app version (semver). Surfaced in --help and the About dialog, and the anchor for
 // CHANGELOG.md releases. Bump this together with a new CHANGELOG entry and git tag.
 private enum AppInfo {
-    static let version = "3.0.0"
+    static let version = "3.1.0"
     static let name = "co-awake"
     static let tagline = "An animated GIF in the macOS menu bar, its playback speed driven by live system load."
     static let copyright = "© 2026 Bin Le"
@@ -567,7 +567,7 @@ private enum Tuning {
     }
 
     // ── Other sleep assertions (SleepAssertionMonitor) ────────────────────────────────────────────
-    // What the "Other Assertions" section under Keep Awake ▸ will show. The rows name owner + type and
+    // What the "Other Assertions" section will show. The rows name owner + type and
     // nothing more: an assertion is NOT an effect (PreventUserIdleSystemSleep alone does not hold the
     // display, and the system follows the display down — which is why this app spawns `caffeinate -di`),
     // so "your Mac can't sleep" can be false while the list is accurate.
@@ -717,8 +717,8 @@ private enum Tuning {
 // KeepAwakeColor.menuTitle) are already single-source and stay there; this namespace covers the
 // literals that were previously inlined at both a creation site and a refresh site.
 //
-// Two rows model a qualifier that sits *between* the prefix and the colon (`CPU Usage (smoothed):`,
-// `Speed Multiplier (auto: …)`): the bare prefix is stored once and the qualified forms derive from
+// A row that models a qualifier sitting *between* the prefix and the colon
+// (`Speed Multiplier (auto: …)`): the bare prefix is stored once and the qualified forms derive from
 // it via the helpers below, so the placeholder and refresh can't disagree as they did before.
 //
 // Ellipsis style is frozen as-is per string (some use `…`, some ASCII `...`) — this is a pure
@@ -726,18 +726,20 @@ private enum Tuning {
 private enum MenuTitle {
     // Group 1 — static, single-site labels (moved for inventory completeness).
     static let keepAwake = "Keep Awake"
-    static let keepAwakeOff = "Off"
     static let displayMode = "Display Mode"
     static let runnerPresets = "Runner Preset"
-    static let drivingSource = "Selected Metric"
     static let indicatorTint = "Indicator Bar Tint"
     static let presets = "Presets"
     static let about = "About"
     static let exit = "Exit"
     static let clear = "Clear"
 
-    // Update-check items.
-    static let updateAvailablePrefix = "Update available"
+    // Settings ▸ — the root row also carries the only root-level hint that a newer release is known.
+    static let settings = "Settings"
+    static let settingsUpdateAvailable = "Settings · Update available"
+
+    // Update-check row: one row whose title and action follow `updatePhase` (refreshUpdateStatus).
+    static func updateTo(_ tag: String) -> String { "Update to \(tag)…" }
     static let checkForUpdates = "Check for Updates…"
     static let checkingForUpdates = "Checking for Updates…"
     // The compile between the pull and the Restart offer. Names the version so the row reads as
@@ -745,9 +747,18 @@ private enum MenuTitle {
     static func building(_ tag: String) -> String { "Building \(tag)…" }
 
     // Keep Awake's battery release threshold.
-    static let batteryThresholdPrefix = "Battery Safety Floor"
+    static let batteryThresholdPrefix = "Battery Release Threshold"
     static func batteryThreshold(_ suffix: String) -> String { "\(batteryThresholdPrefix): \(suffix)" }
     static let batteryThresholdNever = "Never"
+    // The parent row's tooltip names the 5% floor because the threshold is the only battery knob in
+    // the menu, and a user setting Never would otherwise read it as "never releases on battery".
+    static var batteryThresholdTooltip: String {
+        "Keep Awake always releases at \(criticalPercent)% on battery; this threshold sits above it."
+    }
+    static var batteryThresholdNeverTooltip: String {
+        "Keep Awake no longer releases at a chosen level, but still always releases at \(criticalPercent)% on battery."
+    }
+    private static var criticalPercent: Int { Int((Tuning.batteryCriticalThreshold * Tuning.percentScale).rounded()) }
     static let batteryThresholdCustom = "Custom…"
     // Shared by the rows and the parent row's readout, so a row and the title it selects always agree.
     static func batteryThresholdValue(_ fraction: Double) -> String {
@@ -777,13 +788,9 @@ private enum MenuTitle {
     static func line(_ prefix: String, _ value: String) -> String { "\(prefix): \(value)" }
 
     // Metric state line. Derives as "<Source> State:" for every source EXCEPT .memory (which shows
-    // "Memory Pressure:"); the usage prefix is source-specific (`.cpu` qualifies with "(smoothed)",
-    // the rest use a bare "<Source>:").
+    // "Memory Pressure:"); the usage prefix is the bare "<Source>:" for every source.
     static let memoryPressurePrefix = "Memory Pressure"
     static func statePrefix(for source: LoadSource) -> String { "\(source.menuTitle) State" }
-
-    static let cpuUsagePrefix = "CPU Usage"
-    static let cpuUsageQualified = "\(cpuUsagePrefix) (smoothed)"
 
     // Speed multiplier. Bare prefix stored once; the qualified forms (auto/fixed) derive from it so
     // the placeholder ("Speed Multiplier: --") and the refresh ("Speed Multiplier (auto: …)") share
@@ -795,40 +802,43 @@ private enum MenuTitle {
     // Self-throttle line.
     static let slowingAnimation = "Slowing animation"
 
-    // The submenu's second section header. The submenu answers two different questions — is this MAC
-    // held awake (by anyone), and what is THIS APP set to do — and every control below this row acts on
-    // the second only. Naming that scope is what keeps a ticked `Off` from reading as "the Mac is not
-    // held awake" while the machine row above says it is: the two rows have different subjects, and
-    // before this header the only thing separating them was a separator line. The first section needs
-    // no header — the machine row IS its headline.
-    static let keepAwakeThisApp = "This App"
+    // The read-only second level: sleep-assertion evidence, per-source splits, and the live animation
+    // multiplier — what the root rows deliberately leave out so each carries one figure.
+    static let diagnostics = "Diagnostics"
+    static let animationSpeed = "Animation Speed"
+    static func animationSpeedValue(_ multiplier: Double, auto: Bool) -> String {
+        String(format: "%.2fx (%@)", multiplier, auto ? "auto" : "fixed")
+    }
 
-    // Keep Awake timed release. `keepAwake` above is the submenu's own title; these are the duration
-    // group's rows and the two places the remaining time is rendered (the parent row, so the window is
-    // visible without opening the submenu, and the countdown readout inside it).
+    // The root menu's first row: one click, one meaning — Start when the intent is off, Stop when it
+    // is on — composed segment by segment (action · stop condition · holding state) so the three
+    // independent facts never shadow each other the way an if-else chain would.
+    static let keepAwakeStart = "Start \(keepAwake)"
+    static let keepAwakeStop = "Stop \(keepAwake)"
+    static let keepAwakeSegmentSeparator = " · "
+    static func keepAwakeLeftSegment(_ remaining: String) -> String { "\(remaining) left" }
+    static func keepAwakeUntilExitsSegment(_ label: String) -> String { "until \(label) exits" }
+    static let keepAwakePausedSegment = "paused"
+
+    // Keep Awake timed release: the window submenu's own title, the duration group's rows, and the
+    // countdown readout inside it.
+    static let keepAwakeFor = "Keep Awake For"
     static let keepAwakeDurationHeader = "Duration"
     static let keepAwakeIndefinite = "Until turned off"
     static let keepAwakeCustomDuration = "Custom…"
-    static func keepAwakeRemaining(_ remaining: String) -> String { "\(keepAwake): \(remaining)" }
     // Both halves of the answer: time left, and the wall-clock moment it ends.
     static func keepAwakeRemainingRow(_ remaining: String, until: String) -> String {
         "\(remaining) left (until \(until))"
     }
 
     // Paused = the user's intent is on but a condition has caffeinate killed, so the Mac CAN sleep.
-    // Said on the parent row (visible without opening the submenu) because the alternative — a ticked
-    // color row and an absent 2pt track line — is not a signal anyone reads. The status row then says
-    // which condition and, for battery, at what charge, so "why" needs no guessing.
-    static let keepAwakePausedSuffix = "(paused)"
-    static let keepAwakePausedBare = "\(keepAwake): paused"
-    static func keepAwakePausedWithWindow(_ remaining: String) -> String {
-        "\(keepAwake): \(remaining) \(keepAwakePausedSuffix)"
-    }
+    // The first row says only that it is paused; this status row in the window submenu says which
+    // condition and, for battery, at what charge, so "why" needs no guessing.
     static func keepAwakePausedRow(_ reason: String) -> String { "paused — \(reason)" }
 
     // Keep Awake bound to a process. It sits in the Duration group and reads like its siblings ("Until
     // turned off") because that is what it is: a window whose end is an event rather than a clock.
-    // The subject is named on every surface — parent row, status row — rather than just "a process":
+    // The subject is named on every surface — first row, status row — rather than just "a process":
     // an assertion nobody can attribute is the thing the Other Assertions section exists to fix, and
     // this app must not become that for its own hold.
     static let keepAwakeUntilProcessExits = "Until a process exits…"
@@ -838,11 +848,7 @@ private enum MenuTitle {
         guard let name, !name.isEmpty else { return "PID \(pid)" }
         return "\(name) (\(pid))"
     }
-    static func keepAwakeWithProcess(_ label: String) -> String { "\(keepAwake): \(label)" }
-    static func keepAwakePausedWithProcess(_ label: String) -> String {
-        "\(keepAwake): \(label) \(keepAwakePausedSuffix)"
-    }
-    static func keepAwakeProcessRow(_ label: String) -> String { "until \(label) exits" }
+    static func keepAwakeProcessRow(_ label: String) -> String { keepAwakeUntilExitsSegment(label) }
 
     // "Other Assertions" — the read-only section listing OTHER processes' sleep assertions. The row is
     // owner + raw assertion type and nothing else. Rendering the type verbatim rather than glossing it
@@ -868,7 +874,7 @@ private enum MenuTitle {
     //
     // Two rules of wording, both load-bearing:
     //   - ALWAYS attributed ("this app" / the owner's name). Whether the thing you're looking at is
-    //     yours to turn off is the next question after "is it held", and the Off row above can only
+    //     yours to turn off is the next question after "is it held", and the Stop Keep Awake row can only
     //     release ours. An unattributed "held awake" would read as a promise this menu can't keep.
     //   - never a claim beyond the data. `pmset` policy, clamshell, the 5% floor and a user-initiated
     //     sleep are all invisible here, so the row says what is HOLDING sleep, never that the Mac
@@ -1144,7 +1150,7 @@ private enum KeepAwakeDuration: Equatable {
 
     // The rows offered in the submenu's duration group, in display order.
     static var presetRows: [KeepAwakeDuration] {
-        [.indefinite] + Tuning.keepAwakeDurations.map { .seconds($0) }
+        Tuning.keepAwakeDurations.map { .seconds($0) } + [.indefinite]
     }
 
     // nil for indefinite — the same nil that means "no `-t`" at the spawn site.
@@ -4545,7 +4551,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         return image
     }()
 
-    // A radio/toggle row: targeted at self — these all live in submenus, which infoMenu's root-only
+    // A radio/toggle row: targeted at self — most live in submenus, which infoMenu's root-only
     // target pass never reaches — and wearing the shared selection mark, so its "selected" state renders
     // as the filled dot instead of the native ✓. Every item whose `.state` toggles is built here.
     private func makeSelectionItem(_ title: String, action: Selector, tag: Int = 0) -> NSMenuItem {
@@ -4594,11 +4600,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var runnerGifDisplayItem: NSMenuItem!
     private var traceChartPresetItem: NSMenuItem!
     private var liveValuePresetItem: NSMenuItem!
-    // Driving Telemetry Source submenu items
-    private var drivingSourceMenuItems: [LoadSource: NSMenuItem] = [:]
     // Keep Awake tint submenu items
     private var keepAwakeTintItems: [NSMenuItem] = []
-    // "Battery Safety Floor ▸" submenu: Keep Awake's battery release threshold.
+    // "Battery Release Threshold ▸" submenu: Keep Awake's battery release threshold.
     private var batteryThresholdMenuItem: NSMenuItem!
     private var batteryThresholdItems: [NSMenuItem] = []
     private var batteryThresholdCustomItem: NSMenuItem!
@@ -4606,12 +4610,12 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var startAtLoginMenuItem: NSMenuItem!
     private var presetMenuItems: [NSMenuItem] = []
     // In-app update check. `latestKnownVersion` is the newest release tag found on origin (nil until a
-    // probe completes, or on any failure — fail-silent). `updateItem` is the passive "Update
-    // available" line (hidden when up to date / not a git checkout); `checkForUpdatesItem` forces a
-    // fresh probe. Both driven by refreshUpdateStatus(). See SemVer / UpdateChecker.
+    // probe completes, or on any failure — fail-silent). `updateMenuItem` is the single update row in
+    // Settings ▸ — check, progress, or "Update to …" — and `settingsMenuItem` is its root parent, whose
+    // title flags a known newer release. Both driven by refreshUpdateStatus(). See SemVer / UpdateChecker.
     private var latestKnownVersion: SemVer?
-    private var updateItem: NSMenuItem!
-    private var checkForUpdatesItem: NSMenuItem!
+    private var settingsMenuItem: NSMenuItem!
+    private var updateMenuItem: NSMenuItem!
     // Where the update flow is, which is both the re-entrancy guard (so overlapping manual checks
     // can't stack git processes) and what the menu row reports. `.building` is a real third state, not
     // a longer `.checking`: it is the phase that can run for a minute, and saying so is the difference
@@ -4699,16 +4703,15 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // applyLaunchKeepAwakeState) and saved on every change to it; the actual caffeinate process is
     // suspended/respawned by conditionsDidChange().
     private let sleepPreventer = SleepPreventer()
-    // Parent of the "Keep Awake ▸" submenu, whose rows are one merged radio group: Off + one row per
-    // KeepAwakeColor. Picking a color turns keep-awake on with that tint; picking Off turns it off — so
-    // enabled-state and tint are a single choice (no separate toggle / color submenu).
+    // The root menu's first row: Start / Stop Keep Awake, titled from intent · stop condition · holding
+    // state in refreshKeepAwakeSelectionState(). Its click is the Option-click quick toggle, not a
+    // second implementation of on/off.
+    private var keepAwakeToggleItem: NSMenuItem!
+    // Parent of the "Keep Awake For ▸" submenu. Fixed title: the state lives on the row above it.
     private var keepAwakeMenuItem: NSMenuItem!
-    private var keepAwakeOptionItems: [NSMenuItem] = []
-    // Sentinel tag for the submenu's "Off" row — distinct from every KeepAwakeColor.rawValue (0, 1, …).
-    private static let keepAwakeOffTag = -1
-    // Second, independent radio group in the same submenu: the timed window. Its rows carry indices
-    // into KeepAwakeDuration.presetRows and are read ONLY by selectKeepAwakeDuration, so this tag
-    // space is disjoint from the tint group's (which selectKeepAwakeOption owns) despite the overlap.
+    // The submenu's radio group: the window. Its rows carry indices into KeepAwakeDuration.presetRows
+    // and are read ONLY by selectKeepAwakeDuration. With the intent off no row is marked — turning it
+    // off is the first row's job, not a row in this group.
     private var keepAwakeDurationItems: [NSMenuItem] = []
     private var keepAwakeCustomDurationItem: NSMenuItem!
     private var keepAwakeProcessItem: NSMenuItem!
@@ -4724,6 +4727,10 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // otherSourceRowItems pattern: refresh must never add or remove NSMenuItems.
     private var otherAssertionRowItems: [NSMenuItem] = []
     private var otherAssertionsMoreItem: NSMenuItem!
+    // Diagnostics ▸ rows, pre-created once and driven by title/isHidden: one split row per source
+    // (hidden whenever breakdownText(for:) has nothing valid) and the animation-multiplier row.
+    private var diagnosticItems: [LoadSource: NSMenuItem] = [:]
+    private var animationSpeedItem: NSMenuItem!
     private let assertionMonitor = SleepAssertionMonitor()
     // The armed window, kept alongside the deadline because remaining time alone can't say which row
     // to mark (it shrinks). `.indefinite` whenever no window is armed.
@@ -4757,8 +4764,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // supply it, since reader sampling is active-only and Battery usually isn't the driving source.
     private var batteryState: (onBattery: Bool, percent: Double)?
     private var batteryRunLoopSource: CFRunLoopSource?
-    // An explicit user gesture to keep the Mac awake despite a low battery. Set only by the two menu
-    // paths (a color row, or arming a duration) — deliberately NOT by --keep-awake or the restored
+    // An explicit user gesture to keep the Mac awake despite a low battery. Set only by menu
+    // gestures that arm (a window row, the first row, Option-click) — deliberately NOT by --keep-awake or the restored
     // window, both of which fire with nobody present, which is the same stale-flag risk that already
     // keeps an *indefinite* saved window from being restored. Memory-only for the same reason: a
     // relaunch is a fresh decision, so this never reaches state.json.
@@ -4904,11 +4911,16 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             activeLoadSource = .cpu
         }
 
-        // Unified source list: pure read-only dashboard readouts
+        // Section 1: Keep Awake — the one daily action on the first row, its window options below it.
+        keepAwakeToggleItem = NSMenuItem(title: MenuTitle.keepAwakeStart, action: #selector(toggleKeepAwakeRootAction), keyEquivalent: "")
+        infoMenu.addItem(keepAwakeToggleItem)
+        infoMenu.addItem(makeKeepAwakeMenuItem())
+        infoMenu.addItem(NSMenuItem.separator())
+
+        // Unified source list: each readout is also the radio that picks the driving source — one
+        // entry point for "what is this metric" and "make it drive the animation".
         for source in LoadSource.allCases {
-            let item = NSMenuItem(title: source.menuTitle, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            item.tag = source.rawValue
+            let item = makeSelectionItem(source.menuTitle, action: #selector(selectLoadSource(_:)), tag: source.rawValue)
             item.isHidden = !telemetry.isSourceAvailable(source)
             infoMenu.addItem(item)
             sourceMenuItems[source] = item
@@ -4920,31 +4932,12 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         throttleStatusItem.isHidden = true
         infoMenu.addItem(throttleStatusItem)
 
-        // Section 2: Keep Awake (High cohesion, includes Battery Safety Floor & Tint)
+        // Read-only second level: sleep assertions, per-source splits, animation multiplier.
         infoMenu.addItem(NSMenuItem.separator())
-        infoMenu.addItem(makeKeepAwakeMenuItem())
+        infoMenu.addItem(makeDiagnosticsMenuItem())
 
-        // Section 3: Appearance & Driver Configuration
-        infoMenu.addItem(NSMenuItem.separator())
-        infoMenu.addItem(makeDisplayModeMenuItem())
-        infoMenu.addItem(makePresetsMenuItem())
-        infoMenu.addItem(makeDrivingSourceMenuItem())
-
-        // Section 4: App Lifecycle
-        infoMenu.addItem(NSMenuItem.separator())
-        startAtLoginMenuItem = makeSelectionItem(MenuTitle.startAtLogin, action: #selector(toggleStartAtLogin(_:)))
-        infoMenu.addItem(startAtLoginMenuItem)
-
-        infoMenu.addItem(NSMenuItem.separator())
-        // Update-check items. `updateItem` is a passive "Update available" line, hidden until a probe
-        // finds a newer release; "Check for Updates…" forces a fresh probe. Both are hidden entirely
-        // when this isn't a git checkout (repoDirURL == nil) — see refreshUpdateStatus(). Top-level, so
-        // the blanket target-wiring below covers them.
-        updateItem = NSMenuItem(title: MenuTitle.updateAvailablePrefix, action: #selector(promptSelfUpdate), keyEquivalent: "")
-        updateItem.isHidden = true
-        infoMenu.addItem(updateItem)
-        checkForUpdatesItem = NSMenuItem(title: MenuTitle.checkForUpdates, action: #selector(checkForUpdates), keyEquivalent: "")
-        infoMenu.addItem(checkForUpdatesItem)
+        // Low-frequency configuration and app lifecycle, one level down.
+        infoMenu.addItem(makeSettingsMenuItem())
 
         infoMenu.addItem(NSMenuItem.separator())
         infoMenu.addItem(NSMenuItem(title: MenuTitle.about, action: #selector(showAbout), keyEquivalent: ""))
@@ -5126,8 +5119,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     // MARK: - Menu construction
 
-    // "Battery Threshold ▸" submenu: Keep Awake's battery release threshold.
-    // A standalone root-level menu item with a nested submenu for value selection.
+    // "Battery Release Threshold ▸" submenu: Keep Awake's battery release threshold, nested at the end
+    // of "Keep Awake For ▸".
     private func makeBatteryThresholdMenuItem() -> NSMenuItem {
         batteryThresholdMenuItem = NSMenuItem(title: MenuTitle.batteryThresholdPrefix, action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: MenuTitle.batteryThresholdPrefix)
@@ -5149,26 +5142,21 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         return batteryThresholdMenuItem
     }
 
-    // "Keep Awake ▸" submenu: direct duration controls, nested battery/tint settings, and machine evidence.
+    // "Keep Awake For ▸" submenu: the window group, its status row, and the battery release threshold.
     private func makeKeepAwakeMenuItem() -> NSMenuItem {
-        keepAwakeMenuItem = NSMenuItem(title: MenuTitle.keepAwake, action: nil, keyEquivalent: "")
-        let keepAwakeSubmenu = NSMenu(title: MenuTitle.keepAwake)
-
-        // ── Section 1: CONTROLS & DURATION ──────────────────────────────────────────
-        let offItem = makeSelectionItem(MenuTitle.keepAwakeOff, action: #selector(selectKeepAwakeOption(_:)), tag: Self.keepAwakeOffTag)
-        keepAwakeSubmenu.addItem(offItem)
-        keepAwakeOptionItems.append(offItem)
+        keepAwakeMenuItem = NSMenuItem(title: MenuTitle.keepAwakeFor, action: nil, keyEquivalent: "")
+        let keepAwakeSubmenu = NSMenu(title: MenuTitle.keepAwakeFor)
 
         for (index, duration) in KeepAwakeDuration.presetRows.enumerated() {
             let item = makeSelectionItem(duration.menuTitle, action: #selector(selectKeepAwakeDuration(_:)), tag: index)
             keepAwakeSubmenu.addItem(item)
             keepAwakeDurationItems.append(item)
         }
-        keepAwakeCustomDurationItem = makeSelectionItem(MenuTitle.keepAwakeCustomDuration, action: #selector(promptCustomKeepAwakeDuration))
-        keepAwakeSubmenu.addItem(keepAwakeCustomDurationItem)
-
         keepAwakeProcessItem = makeSelectionItem(MenuTitle.keepAwakeUntilProcessExits, action: #selector(promptKeepAwakeBoundProcess))
         keepAwakeSubmenu.addItem(keepAwakeProcessItem)
+
+        keepAwakeCustomDurationItem = makeSelectionItem(MenuTitle.keepAwakeCustomDuration, action: #selector(promptCustomKeepAwakeDuration))
+        keepAwakeSubmenu.addItem(keepAwakeCustomDurationItem)
 
         keepAwakeStatusItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         keepAwakeStatusItem.isEnabled = false
@@ -5178,36 +5166,86 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         keepAwakeSubmenu.addItem(keepAwakeStatusSeparatorItem)
         keepAwakeSubmenu.addItem(keepAwakeStatusItem)
 
-        // ── Section 2: PREFERENCES (SUBMENUS) ─────────────────────────────────────────
         keepAwakeSubmenu.addItem(NSMenuItem.separator())
         keepAwakeSubmenu.addItem(makeBatteryThresholdMenuItem())
-        keepAwakeSubmenu.addItem(makeKeepAwakeTintMenuItem())
 
-        // ── Section 3: THIS MAC (MACHINE SLEEP STATE) ─────────────────────────────────
-        keepAwakeSubmenu.addItem(NSMenuItem.separator())
+        keepAwakeMenuItem.submenu = keepAwakeSubmenu
+        return keepAwakeMenuItem
+    }
+
+    // The machine row plus Other Assertions — read-only evidence of who holds this Mac awake. Returned
+    // as rows rather than a submenu so the caller decides where the section lives; refresh addresses
+    // the stored items, never menu positions.
+    private func makeSleepAssertionItems() -> [NSMenuItem] {
+        var items: [NSMenuItem] = []
         machineAwakeItem = NSMenuItem(title: MenuTitle.machineAwakeNone, action: nil, keyEquivalent: "")
         machineAwakeItem.isEnabled = false
-        keepAwakeSubmenu.addItem(machineAwakeItem)
+        items.append(machineAwakeItem)
 
         let assertionsHeaderItem = NSMenuItem(title: MenuTitle.otherAssertions, action: nil, keyEquivalent: "")
         assertionsHeaderItem.isEnabled = false
-        keepAwakeSubmenu.addItem(assertionsHeaderItem)
+        items.append(assertionsHeaderItem)
         for _ in 0..<Tuning.assertionRowCap {
             let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             item.isEnabled = false
             item.indentationLevel = 1
             item.isHidden = true
-            keepAwakeSubmenu.addItem(item)
+            items.append(item)
             otherAssertionRowItems.append(item)
         }
         otherAssertionsMoreItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         otherAssertionsMoreItem.isEnabled = false
         otherAssertionsMoreItem.indentationLevel = 1
         otherAssertionsMoreItem.isHidden = true
-        keepAwakeSubmenu.addItem(otherAssertionsMoreItem)
+        items.append(otherAssertionsMoreItem)
+        return items
+    }
 
-        keepAwakeMenuItem.submenu = keepAwakeSubmenu
-        return keepAwakeMenuItem
+    // Diagnostics ▸ — every row is read-only. Three sections: who holds this Mac awake, the secondary
+    // split behind each root readout, and the live animation multiplier. Rows are addressed through
+    // stored references, so the move from the root menu leaves LOG_AWAKE's `row=` untouched.
+    private func makeDiagnosticsMenuItem() -> NSMenuItem {
+        let parentItem = NSMenuItem(title: MenuTitle.diagnostics, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: MenuTitle.diagnostics)
+        makeSleepAssertionItems().forEach(submenu.addItem)
+
+        submenu.addItem(NSMenuItem.separator())
+        for source in LoadSource.allCases {
+            let item = NSMenuItem(title: source.menuTitle, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            item.isHidden = true   // until refreshDiagnosticsState finds a valid split
+            submenu.addItem(item)
+            diagnosticItems[source] = item
+        }
+
+        submenu.addItem(NSMenuItem.separator())
+        animationSpeedItem = NSMenuItem(title: MenuTitle.line(MenuTitle.animationSpeed, MenuTitle.placeholderValue), action: nil, keyEquivalent: "")
+        animationSpeedItem.isEnabled = false
+        submenu.addItem(animationSpeedItem)
+
+        parentItem.submenu = submenu
+        return parentItem
+    }
+
+    // Settings ▸ — appearance, login item, and the one update row. Submenu items need an explicit
+    // target: the root-level target wiring in applicationDidFinishLaunching doesn't reach them.
+    private func makeSettingsMenuItem() -> NSMenuItem {
+        settingsMenuItem = NSMenuItem(title: MenuTitle.settings, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: MenuTitle.settings)
+        submenu.addItem(makeDisplayModeMenuItem())
+        submenu.addItem(makePresetsMenuItem())
+        submenu.addItem(makeKeepAwakeTintMenuItem())
+
+        submenu.addItem(NSMenuItem.separator())
+        startAtLoginMenuItem = makeSelectionItem(MenuTitle.startAtLogin, action: #selector(toggleStartAtLogin(_:)))
+        submenu.addItem(startAtLoginMenuItem)
+        // Title / action are rewritten by refreshUpdateStatus(); hidden when this isn't a git checkout.
+        updateMenuItem = NSMenuItem(title: MenuTitle.checkForUpdates, action: #selector(checkForUpdates), keyEquivalent: "")
+        submenu.addItem(updateMenuItem)
+
+        submenu.items.forEach { $0.target = self }
+        settingsMenuItem.submenu = submenu
+        return settingsMenuItem
     }
 
     private func makeKeepAwakeTintMenuItem() -> NSMenuItem {
@@ -5264,30 +5302,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
         presetsMenuItem.submenu = presetsSubmenu
         return presetsMenuItem
-    }
-
-    private func makeDrivingSourceMenuItem() -> NSMenuItem {
-        let parentItem = NSMenuItem(title: MenuTitle.drivingSource, action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: MenuTitle.drivingSource)
-
-        for source in LoadSource.allCases {
-            let item = NSMenuItem(title: source.menuTitle, action: #selector(selectLoadSource(_:)), keyEquivalent: "")
-            item.target = self
-            item.tag = source.rawValue
-            item.onStateImage = Self.selectionMarkImage
-            item.isHidden = !telemetry.isSourceAvailable(source)
-            submenu.addItem(item)
-            drivingSourceMenuItems[source] = item
-        }
-        parentItem.submenu = submenu
-        return parentItem
-    }
-
-    private func refreshDrivingSourceMenuState() {
-        for (source, item) in drivingSourceMenuItems {
-            item.isHidden = !telemetry.isSourceAvailable(source)
-            item.state = (source == activeLoadSource) ? .on : .off
-        }
     }
 
     // MARK: - Quit & About
@@ -5361,35 +5375,41 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // MARK: - Update check
 
     // Reflects the latest probe result into the menu. Read-only of already-fetched state (never blocks
-    // on git) since it runs on every menuWillOpen. When this isn't a git checkout there's nothing to
-    // pull, so both update items are hidden entirely.
+    // on git) since it runs on every menuWillOpen. Title, action and target are written together on
+    // every call: a busy phase clears the action rather than setting isEnabled = false, because the
+    // menu autoenables items and an action-less item is the only state AppKit can't re-enable.
     private func refreshUpdateStatus() {
+        let newer: SemVer? = {
+            guard let latest = latestKnownVersion, let current = SemVer(AppInfo.version), latest > current else { return nil }
+            return latest
+        }()
         guard repoDirURL != nil else {
-            updateItem.isHidden = true
-            checkForUpdatesItem.isHidden = true
+            updateMenuItem.isHidden = true
+            settingsMenuItem.title = MenuTitle.settings
             return
         }
-        checkForUpdatesItem.isHidden = false
+        updateMenuItem.isHidden = false
+        updateMenuItem.attributedTitle = nil
+        updateMenuItem.target = self
+        var updateAvailable = false
         switch updatePhase {
-        case .idle:
-            checkForUpdatesItem.isEnabled = true
-            checkForUpdatesItem.title = MenuTitle.checkForUpdates
         case .checking:
-            checkForUpdatesItem.isEnabled = false
-            checkForUpdatesItem.title = MenuTitle.checkingForUpdates
+            updateMenuItem.title = MenuTitle.checkingForUpdates
+            updateMenuItem.action = nil
         case .building(let version):
-            checkForUpdatesItem.isEnabled = false
-            checkForUpdatesItem.title = MenuTitle.building(version.tagString)
+            updateMenuItem.title = MenuTitle.building(version.tagString)
+            updateMenuItem.action = nil
+        case .idle:
+            if let newer {
+                updateMenuItem.title = MenuTitle.updateTo(newer.tagString)
+                updateMenuItem.action = #selector(promptSelfUpdate)
+                updateAvailable = true
+            } else {
+                updateMenuItem.title = MenuTitle.checkForUpdates
+                updateMenuItem.action = #selector(checkForUpdates)
+            }
         }
-
-        if let latest = latestKnownVersion, let current = SemVer(AppInfo.version), latest > current {
-            let title = MenuTitle.line(MenuTitle.updateAvailablePrefix, "\(latest.tagString) →")
-            let bold = NSFontManager.shared.convert(NSFont.menuFont(ofSize: 0), toHaveTrait: .boldFontMask)
-            updateItem.attributedTitle = NSAttributedString(string: title, attributes: [.font: bold])
-            updateItem.isHidden = false
-        } else {
-            updateItem.isHidden = true
-        }
+        settingsMenuItem.title = updateAvailable ? MenuTitle.settingsUpdateAvailable : MenuTitle.settings
     }
 
     // Kicks off a single off-main `ls-remote` probe. Fail-silent for the launch check; a user-initiated
@@ -5445,6 +5465,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // checkout, and it always requires the menu click plus this confirm — never automatic.
     @objc
     private func promptSelfUpdate() {
+        // Second guard behind the action-less busy row: a click landing in the same run-loop turn as a
+        // phase change must not start a second pull/build.
+        guard case .idle = updatePhase else { return }
         guard let repoDir = repoDirURL,
               let latest = latestKnownVersion,
               let current = SemVer(AppInfo.version), latest > current else {
@@ -6027,20 +6050,51 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         logThermalIfRequested()   // no-op unless CO_AWARENESS_LOG_THERMAL=1
     }
 
-    // The fully-labeled dropdown readout for a source.
+    // The root readout for a source: one primary figure per row, colon-formatted via MenuTitle.line.
+    // The sole formatter for that row — the menu and LOG_THERMAL's `row=` both read it, so the test
+    // cannot pass on a string the menu never shows. Secondary splits live in breakdownText(for:).
     private func usageLineText(for source: LoadSource) -> String {
+        let value: String
         switch source {
-        case .cpu: return cpuUsageLineText()
-        case .memory: return memoryUsageLineText()
-        case .gpu: return gpuUsageLineText()
-        case .network: return networkUsageLineText()
-        case .disk: return diskUsageLineText()
-        case .fan: return fanUsageLineText()
-        case .battery: return batteryUsageLineText()
-        case .temperature: return temperatureUsageLineText()
-        case .ane: return aneUsageLineText()
-        case .bandwidth: return bandwidthUsageLineText()
+        case .cpu:
+            value = String(format: "%.0f%%", telemetry.loadMonitor.smoothedUsage * Tuning.percentScale)
+        case .memory:
+            value = String(format: "%.0f%%", telemetry.memoryMonitor.currentUsedFraction * Tuning.percentScale)
+        case .gpu:
+            value = String(format: "%.0f%%", telemetry.gpuMonitor.currentUtilization * Tuning.percentScale)
+        // Network/disk/fan rows show the human-meaningful readouts (MB/s per direction, RPM), not the
+        // adaptive-normalized 0…1 load that actually drives the animation (activeSourceCurrentUsage).
+        case .network:
+            value = String(
+                format: "↓%.1f ↑%.1f MB/s",
+                telemetry.networkMonitor.currentInboundBytesPerSec / Tuning.bytesPerMiB,
+                telemetry.networkMonitor.currentOutboundBytesPerSec / Tuning.bytesPerMiB
+            )
+        case .disk:
+            value = String(
+                format: "R %.1f · W %.1f MB/s",
+                telemetry.diskMonitor.currentReadBytesPerSec / Tuning.bytesPerMiB,
+                telemetry.diskMonitor.currentWriteBytesPerSec / Tuning.bytesPerMiB
+            )
+        case .fan:
+            // The fastest fan: one number that answers "is it loud"; the per-fan split is secondary.
+            value = telemetry.fanMonitor.perFan.map(\.rpm).max()
+                .map { String(format: "%.0f RPM", $0) } ?? MenuTitle.placeholderValue
+        case .battery:
+            value = String(format: "%.0f%%", telemetry.batteryMonitor.currentChargeFraction * Tuning.percentScale)
+        case .temperature:
+            value = temperatureValueText()
+        // Two decimals because the interesting band is small and low — light inference sits near
+        // 0.3 W. "idle" rather than a bare 0.00 W when the NPU is power-gated: the counter reads a hard
+        // zero then, which is a different statement from "measured, and it rounds to zero".
+        case .ane:
+            value = telemetry.aneMonitor.currentWatts > 0
+                ? String(format: "%.2f W", telemetry.aneMonitor.currentWatts)
+                : "idle"
+        case .bandwidth:
+            value = String(format: "%.1f GB/s", telemetry.bandwidthMonitor.currentGigabytesPerSec)
         }
+        return MenuTitle.line(source.menuTitle, value)
     }
 
     // The active source's state row: a load band for every reader but two. Memory reports the kernel's
@@ -6119,149 +6173,104 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         return "Normal"
     }
 
-    // The CPU row carries the whole-machine figure the animation runs on, then WHICH HALF of the
-    // chip is carrying it — same number split two ways, so the clause is appended rather than given
-    // a row of its own. Omitted entirely where no cluster map exists: a machine that cannot answer
-    // says nothing, rather than showing two zeroes.
-    private func cpuUsageLineText() -> String {
-        var line = MenuTitle.line(
-            MenuTitle.cpuUsageQualified,
-            String(format: "%.1f%%", telemetry.loadMonitor.smoothedUsage * Tuning.percentScale)
-        )
-        if let performance = telemetry.loadMonitor.smoothedPerformanceUsage,
-           let efficiency = telemetry.loadMonitor.smoothedEfficiencyUsage {
-            line += String(
-                format: " · P %.0f%% · E %.0f%%",
-                performance * Tuning.percentScale,
-                efficiency * Tuning.percentScale
-            )
-        }
-        return line
+    // Temperature's primary value. No sensor reporting means every cluster is power-gated: the reader
+    // then parks currentCelsius at the floor the animation runs on, but nothing measured it, so the
+    // row bounds it with "≤" rather than presenting it as a measurement (see
+    // TemperatureLoadMonitor.sampleUsage).
+    // Once the kernel is throttling, THAT is what this row is watched for. Strictly the kernel's
+    // doing; this app's own response to the same heat stays on throttleStatusItem, which says
+    // "slowing animation" and never a temperature — the two rows must not read as one sentence
+    // twice. It has to reach BOTH shapes: an all-clusters-parked read is a rendered state (hasSample
+    // stays true), not an unavailable one, so dropping it there would lose the annotation exactly
+    // when the machine is hot enough to park and throttle.
+    private func temperatureValueText() -> String {
+        let celsius = telemetry.temperatureMonitor.currentCelsius
+        let parked = telemetry.temperatureMonitor.perSensor.isEmpty
+        let value = String(format: parked ? "≤%.0f °C" : "%.0f °C", celsius)
+        return KernelThermalPressure.current().isThrottling ? value + " · Thermal Throttling" : value
     }
 
-    // Same shape for the GPU: the device figure, then the two pipeline halves behind it, from the
-    // dictionary the device figure was already read out of. Either half missing drops the clause.
-    private func gpuUsageLineText() -> String {
-        var line = MenuTitle.line(
-            LoadSource.gpu.menuTitle,
-            String(format: "%.0f%%", telemetry.gpuMonitor.currentUtilization * Tuning.percentScale)
-        )
-        if let renderer = telemetry.gpuMonitor.currentRendererUtilization,
-           let tiler = telemetry.gpuMonitor.currentTilerUtilization {
-            line += String(
-                format: " · Renderer %.0f%% · Tiler %.0f%%",
-                renderer * Tuning.percentScale,
-                tiler * Tuning.percentScale
-            )
-        }
-        return line
-    }
-
-    private func bandwidthUsageLineText() -> String {
-        MenuTitle.line(
-            LoadSource.bandwidth.menuTitle,
-            String(format: "%.1f GB/s", telemetry.bandwidthMonitor.currentGigabytesPerSec)
-        )
-    }
-
-    private func memoryUsageLineText() -> String {
-        let pct = telemetry.memoryMonitor.currentUsedFraction * Tuning.percentScale
-        var line = String(format: "Memory: %.0f%%", pct)
-        if telemetry.memoryMonitor.hasSwapSample, telemetry.memoryMonitor.swapTotalBytes > 0 {
-            line += String(
-                format: " · swap %.1f/%.1f GB",
-                Double(telemetry.memoryMonitor.swapUsedBytes) / Tuning.bytesPerGiB,
-                Double(telemetry.memoryMonitor.swapTotalBytes) / Tuning.bytesPerGiB
-            )
-        }
-        // Show the swap *rate* when actively paging — it's part of what drives the animation, so the
-        // dashboard shouldn't read "Memory: 40%" while swap activity pushes the speed higher.
-        if telemetry.memoryMonitor.hasSwapRateSample, telemetry.memoryMonitor.currentSwapRateBytesPerSec > 0 {
-            line += String(format: " · %.1f MB/s", telemetry.memoryMonitor.currentSwapRateBytesPerSec / Tuning.bytesPerMiB)
-        }
-        return line
-    }
-
-    // Network/disk/fan metric lines: the human-meaningful readouts (MB/s per direction, RPM per fan),
-    // not the adaptive-normalized 0…1 load that actually drives the animation (that's
-    // activeSourceCurrentUsage — the average of the two figures shown here). Mirrors the memory line
-    // showing raw used-% while the composite drives speed.
-    private func networkUsageLineText() -> String {
-        String(
-            format: "Network: ↓%.1f MB/s ↑%.1f MB/s",
-            telemetry.networkMonitor.currentInboundBytesPerSec / Tuning.bytesPerMiB,
-            telemetry.networkMonitor.currentOutboundBytesPerSec / Tuning.bytesPerMiB
-        )
-    }
-
-    private func diskUsageLineText() -> String {
-        String(
-            format: "Disk: read %.1f MB/s write %.1f MB/s",
-            telemetry.diskMonitor.currentReadBytesPerSec / Tuning.bytesPerMiB,
-            telemetry.diskMonitor.currentWriteBytesPerSec / Tuning.bytesPerMiB
-        )
-    }
-
-    // One "RPM (util%)" segment per fan, joined with " · " — mirrors memoryUsageLineText's
-    // multi-clause style.
-    private func fanUsageLineText() -> String {
-        let segments = telemetry.fanMonitor.perFan.enumerated().map { index, reading in
-            String(format: "Fan %d: %.0f RPM (%.0f%%)", index + 1, reading.rpm, reading.utilization * Tuning.percentScale)
-        }
-        return segments.joined(separator: " · ")
-    }
-
-    // Temperature line: the hottest sensor (the driver), the spread it was taken from, and how many
-    // sensors answered. Deliberately NOT one segment per sensor the way the fan line does it — that
-    // reads 12 clusters here and up to 102 on the full-family fallback, which would run off the menu.
-    // The range is what the per-fan segments were for: it shows the max isn't a lone outlier.
-    private func temperatureUsageLineText() -> String {
-        let values = telemetry.temperatureMonitor.perSensor.map(\.celsius)
-        // No sensor reporting means every cluster is power-gated. Say so and bound the reading with
-        // "≤" — the floor is the number the animation runs on, but nothing measured it, so the row
-        // must not present it as a measurement (see TemperatureLoadMonitor.sampleUsage).
-        // Once the kernel is throttling, THAT is what this row is watched for. Strictly the kernel's
-        // doing; this app's own response to the same heat stays on throttleStatusItem, which says
-        // "slowing animation" and never a temperature — the two rows must not read as one sentence
-        // twice. It has to reach BOTH shapes of this line: an all-clusters-parked read is a rendered
-        // state (hasSample stays true above), not an unavailable one, so returning early from it
-        // would drop the annotation exactly when the machine is hot enough to park and throttle.
-        let throttling = KernelThermalPressure.current().isThrottling
-        guard let coolest = values.min(), let hottest = values.max() else {
-            let parked = String(format: "Temperature: ≤%.0f °C · every core cluster parked",
-                                telemetry.temperatureMonitor.currentCelsius)
-            // Here it ADDS a clause instead of replacing one: "parked" is the honesty about the number
-            // itself and cannot step aside, where the sensor count below is incidental and can.
-            return throttling ? parked + " · Thermal Throttling" : parked
-        }
-        var line = String(format: "Temperature: %.0f °C", telemetry.temperatureMonitor.currentCelsius)
-        line += String(format: " · P-cores %.0f–%.0f °C", coolest, hottest)
-        line += throttling ? " · Thermal Throttling"
-                           : " · \(values.count) sensor\(values.count == 1 ? "" : "s")"
-        return line
-    }
-
-    // Battery line: charge % (the readout) plus the discharge current in amps while on battery — the
-    // drain that drives the animation — or "AC" when plugged in. When diagnostics are available
-    // (menu open on battery-capable hardware, R22), enriches with health % and cycle count.
-    private func batteryUsageLineText() -> String {
-        let pct = telemetry.batteryMonitor.currentChargeFraction * Tuning.percentScale
-        var line = String(format: "Battery: %.0f%%", pct)
-        if telemetry.batteryMonitor.onBattery {
-            if telemetry.batteryMonitor.currentDischargeMilliamps > 0 {
-                line += String(format: " · %.1f A", telemetry.batteryMonitor.currentDischargeMilliamps / 1000)
+    // The secondary split behind a source's primary figure (the caller prefixes it via MenuTitle.line),
+    // or nil when there is nothing valid to show. Validity is decided HERE so no caller can bypass it, in two
+    // layers: the source must have a sample at all, and each clause must pass the reader's own
+    // field-level flag. Non-nil / non-zero alone is not enough — several readers keep their last
+    // cache on a failed read (GPU halves, perFan, swap figures), so checking only the value would
+    // show a stale split beside a root row that reads "warming up...". A machine that cannot answer
+    // a clause says nothing rather than showing a zero.
+    private func breakdownText(for source: LoadSource) -> String? {
+        guard telemetry.hasSample(source) else { return nil }
+        var clauses: [String] = []
+        switch source {
+        case .cpu:
+            // Which half of the chip carries the whole-machine figure. Both are smoothed series (not
+            // this tick's point read); nil throughout where no cluster map exists.
+            if let performance = telemetry.loadMonitor.smoothedPerformanceUsage,
+               let efficiency = telemetry.loadMonitor.smoothedEfficiencyUsage {
+                clauses.append(String(
+                    format: "P %.0f%% · E %.0f%%",
+                    performance * Tuning.percentScale,
+                    efficiency * Tuning.percentScale
+                ))
             }
-        } else {
-            line += " · AC"
-        }
-        if let diag = batteryDiagnostics {
-            if diag.isServiceRecommended {
-                line += " · \(diag.healthPercent)% health (Service) · \(diag.cycleCount) cycles"
+        case .gpu:
+            // The two pipeline halves, from the dictionary the device figure was read out of. A
+            // missing half is omitted, not zero-filled.
+            if let renderer = telemetry.gpuMonitor.currentRendererUtilization {
+                clauses.append(String(format: "Renderer %.0f%%", renderer * Tuning.percentScale))
+            }
+            if let tiler = telemetry.gpuMonitor.currentTilerUtilization {
+                clauses.append(String(format: "Tiler %.0f%%", tiler * Tuning.percentScale))
+            }
+        case .memory:
+            // Swap capacity and swap rate are independent clauses with their own flags: a failed swap
+            // read keeps the old byte counts, so `swapTotalBytes > 0` alone would show a stale figure.
+            let memory = telemetry.memoryMonitor
+            if memory.hasSwapSample, memory.swapTotalBytes > 0 {
+                clauses.append(String(
+                    format: "swap %.1f/%.1f GB",
+                    Double(memory.swapUsedBytes) / Tuning.bytesPerGiB,
+                    Double(memory.swapTotalBytes) / Tuning.bytesPerGiB
+                ))
+            }
+            // The rate is part of what drives the animation, so it surfaces while actively paging.
+            if memory.hasSwapRateSample, memory.currentSwapRateBytesPerSec > 0 {
+                clauses.append(String(format: "%.1f MB/s", memory.currentSwapRateBytesPerSec / Tuning.bytesPerMiB))
+            }
+        case .temperature:
+            // The spread the hottest sensor was taken from, and how many answered — deliberately not
+            // one segment per sensor (12 clusters here, up to 102 on the full-family fallback). The
+            // range is what shows the max isn't a lone outlier.
+            let values = telemetry.temperatureMonitor.perSensor.map(\.celsius)
+            if let coolest = values.min(), let hottest = values.max() {
+                clauses.append(String(format: "P-cores %.0f–%.0f °C", coolest, hottest))
+                clauses.append("\(values.count) sensor\(values.count == 1 ? "" : "s")")
             } else {
-                line += " · \(diag.healthPercent)% health · \(diag.cycleCount) cycles"
+                clauses.append("every core cluster parked")
             }
+        case .fan:
+            for (index, reading) in telemetry.fanMonitor.perFan.enumerated() {
+                clauses.append(String(format: "Fan %d %.0f RPM (%.0f%%)", index + 1, reading.rpm, reading.utilization * Tuning.percentScale))
+            }
+        case .battery:
+            // The drain that drives the animation while on battery, or "AC" when plugged in; health
+            // and cycles only while diagnostics are loaded (menu open on battery-capable hardware).
+            if telemetry.batteryMonitor.onBattery {
+                if telemetry.batteryMonitor.currentDischargeMilliamps > 0 {
+                    clauses.append(String(format: "%.1f A", telemetry.batteryMonitor.currentDischargeMilliamps / 1000))
+                }
+            } else {
+                clauses.append("AC")
+            }
+            if let diag = batteryDiagnostics {
+                clauses.append("\(diag.healthPercent)% health\(diag.isServiceRecommended ? " (Service)" : "")")
+                clauses.append("\(diag.cycleCount) cycles")
+            }
+        case .network, .disk, .bandwidth, .ane:
+            // The primary figure is the whole reading; there is no split behind it.
+            break
         }
-        return line
+        guard !clauses.isEmpty else { return nil }
+        return clauses.joined(separator: " · ")
     }
 
     private func batteryTooltipText() -> String? {
@@ -6277,15 +6286,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             lines.append("Raw Measured Capacity: \(raw) mAh")
         }
         return lines.joined(separator: "\n")
-    }
-
-    // Neural Engine line: the rail's power draw. Two decimals because the interesting band is small
-    // and low — light inference sits near 0.3 W — so "0.3 W" would round most real work to one digit.
-    // "idle" rather than a bare 0.00 W when the NPU is power-gated: the counter reads a hard zero
-    // then, which is a different statement from "measured, and it rounds to zero".
-    private func aneUsageLineText() -> String {
-        let line = String(format: "ANE: %.2f W", telemetry.aneMonitor.currentWatts)
-        return telemetry.aneMonitor.currentWatts > 0 ? line : line + " · idle"
     }
 
     // MARK: - Selection state
@@ -6394,20 +6394,15 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     private func refreshKeepAwakeSelectionState() {
         let enabled = sleepPreventer.isEnabled
-        for item in keepAwakeOptionItems {
-            if item.tag == Self.keepAwakeOffTag {
-                item.state = !enabled ? .on : .off
-            }
-        }
         for item in keepAwakeTintItems {
             item.state = (item.tag == activeKeepAwakeColor.rawValue) ? .on : .off
         }
 
-        // Section 1: Controls & Duration. When Keep Awake is off, only the "Off" row is marked.
-        // When enabled, exactly one duration/target row holds the mark:
-        // - A pid binding marks "Until process exits…"
+        // Window group. When Keep Awake is off no row is marked. When enabled, exactly one row holds
+        // the mark:
+        // - A pid binding marks "Until a process exits…"
         // - A preset window (or indefinite "Until turned off") marks that preset's row
-        // - A non-preset remaining window marks "Custom Duration…"
+        // - A non-preset remaining window marks "Custom…"
         let rows = KeepAwakeDuration.presetRows
         let boundLabel = enabled ? keepAwakeBoundProcessLabel : nil
         var matchedPresetRow = false
@@ -6419,12 +6414,10 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         keepAwakeCustomDurationItem.state = (enabled && boundLabel == nil && !matchedPresetRow) ? .on : .off
         keepAwakeProcessItem.state = (enabled && boundLabel != nil) ? .on : .off
 
-        // Status row + parent title. Three things can be true — keep-awake is on, a window is armed,
-        // a condition has it paused — so both surfaces are composed rather than branched pairwise.
-        // The paused state is stated on the PARENT row deliberately: it is the one line visible without
-        // opening the submenu, and a paused keep-awake used to be signalled only by the absence of a
-        // 2pt track line, which is not a signal anyone reads. `enabled` is intent; the pause comes from
-        // the effective suspension, so an honored override reads as running, not paused.
+        // Three things can be true at once — keep-awake is on, a window is armed, a condition has it
+        // paused. `enabled` is intent; the pause comes from the effective suspension, so an honored
+        // override reads as running, not paused. A countdown past its deadline is nil: the window is a
+        // wall-clock deadline and elapses whether or not caffeinate is holding.
         let countdown: (text: String, deadline: Date)? = {
             guard enabled, let deadline = keepAwakeDeadline else { return nil }
             let remaining = deadline.timeIntervalSinceNow
@@ -6433,24 +6426,35 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }()
         let suspension = enabled ? effectiveKeepAwakeSuspension : nil
 
+        // First row: action · [stop condition] · [paused], appended segment by segment so no fact
+        // shadows another. Why it is paused is the status row's job below; the first row only says so.
+        var segments = [enabled ? MenuTitle.keepAwakeStop : MenuTitle.keepAwakeStart]
+        if let countdown {
+            segments.append(MenuTitle.keepAwakeLeftSegment(countdown.text))
+        } else if let boundLabel {
+            segments.append(MenuTitle.keepAwakeUntilExitsSegment(boundLabel))
+        }
+        if suspension != nil { segments.append(MenuTitle.keepAwakePausedSegment) }
+        let toggleTitle = segments.joined(separator: MenuTitle.keepAwakeSegmentSeparator)
+        // `title` first: accessibility reads only it, so an attributed-only row is silent to VoiceOver.
+        // Monospaced digits only while a countdown ticks (the 1s ticker runs while the menu is open, and
+        // proportional digits would make the row twitch); otherwise nil the attributed form, or the last
+        // countdown render would keep winning for display.
+        keepAwakeToggleItem.title = toggleTitle
+        keepAwakeToggleItem.attributedTitle = countdown == nil ? nil : NSAttributedString(
+            string: toggleTitle,
+            attributes: [.font: NSFont.monospacedDigitSystemFont(
+                ofSize: NSFont.menuFont(ofSize: 0).pointSize, weight: .regular)]
+        )
+
+        // Status row inside "Keep Awake For ▸": why it is paused beats how long it has left.
         if let suspension {
-            // Why beats how-long: the countdown keeps ticking on the parent row (the window is a
-            // wall-clock deadline and elapses whether or not caffeinate is holding), but the row says
-            // what to do about it. Plain `title`, not `attributedTitle`: this is prose that never ticks
-            // so it needs no monospaced digits, and only `title` is exposed to accessibility — an
-            // attributed-only row reads as an empty item to VoiceOver. Nil the attributed form or a
-            // previous countdown render would keep winning for display.
+            // Plain `title`, not `attributedTitle`: prose that never ticks needs no monospaced digits,
+            // and nil the attributed form or a previous countdown render would keep winning.
             keepAwakeStatusItem.attributedTitle = nil
             keepAwakeStatusItem.title = MenuTitle.keepAwakePausedRow(suspension.reasonText)
             setKeepAwakeStatusRowVisible(true)
-            keepAwakeMenuItem.title = countdown.map { MenuTitle.keepAwakePausedWithWindow($0.text) }
-                ?? boundLabel.map { MenuTitle.keepAwakePausedWithProcess($0) }
-                ?? MenuTitle.keepAwakePausedBare
         } else if let countdown {
-            // Monospaced digits: the countdown refreshes on the 2s tick, including while the menu is
-            // open, and proportional digits would make the row twitch as they change. `title` is set
-            // too, and first: attributedTitle drives what's drawn, but accessibility reads `title`, so
-            // an attributed-only row is silent to VoiceOver.
             let rowText = MenuTitle.keepAwakeRemainingRow(
                 countdown.text, until: KeepAwakeDuration.clockTime(countdown.deadline))
             keepAwakeStatusItem.title = rowText
@@ -6460,18 +6464,13 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                     ofSize: NSFont.menuFont(ofSize: 0).pointSize, weight: .regular)]
             )
             setKeepAwakeStatusRowVisible(true)
-            keepAwakeMenuItem.title = MenuTitle.keepAwakeRemaining(countdown.text)
         } else if let boundLabel {
-            // There is no countdown to render — the end of this window is an event — so the row names
-            // the event instead. Plain `title` like the paused row: it never ticks, so it needs no
-            // monospaced digits, and nil the attributed form or a previous countdown keeps winning.
+            // The end of this window is an event, not a clock, so the row names the event instead.
             keepAwakeStatusItem.attributedTitle = nil
             keepAwakeStatusItem.title = MenuTitle.keepAwakeProcessRow(boundLabel)
             setKeepAwakeStatusRowVisible(true)
-            keepAwakeMenuItem.title = MenuTitle.keepAwakeWithProcess(boundLabel)
         } else {
             setKeepAwakeStatusRowVisible(false)
-            keepAwakeMenuItem.title = MenuTitle.keepAwake
         }
 
         refreshMachineAwakeRow()
@@ -6479,14 +6478,14 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     // "claude (41293)" for every row that attributes the hold, or nil when no process is bound. One
-    // helper so the parent row, the paused variant and the status row can't drift apart.
+    // helper so the first row and the status row can't drift apart.
     private var keepAwakeBoundProcessLabel: String? {
         guard let keepAwakeBoundPID else { return nil }
         return MenuTitle.keepAwakeProcessLabel(pid: keepAwakeBoundPID, name: keepAwakeBoundProcessName)
     }
 
-    // The status row and the separator above it are one unit: the row is the submenu's last, so leaving
-    // the separator behind when the row hides draws a rule under the final item with nothing below it.
+    // The status row and the separator above it are one unit: leaving the separator behind when the
+    // row hides draws a doubled rule above the threshold row.
     private func setKeepAwakeStatusRowVisible(_ visible: Bool) {
         keepAwakeStatusItem.isHidden = !visible
         keepAwakeStatusSeparatorItem.isHidden = !visible
@@ -6699,7 +6698,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func refreshWidthInfo() {
     }
 
-    // Parent title carries the readout ("Battery Threshold: 20%" / ": Never") and the rows mark the
+    // Parent title carries the readout ("Battery Release Threshold: 20%" / ": Never") and the rows mark the
     // active choice; a value matching no row marks Custom… instead, the same fallback the duration
     // group uses. Addresses the stored array, never menu positions.
     private func refreshBatteryThresholdSelectionState() {
@@ -6707,6 +6706,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             MenuTitle.batteryThreshold(MenuTitle.batteryThresholdValue(keepAwakeBatteryThreshold))
 
         let isNever = keepAwakeBatteryThreshold <= Tuning.batteryThresholdOff
+        batteryThresholdMenuItem.toolTip =
+            isNever ? MenuTitle.batteryThresholdNeverTooltip : MenuTitle.batteryThresholdTooltip
         var matchedARow = false
         for item in batteryThresholdItems {
             let selected: Bool
@@ -7129,39 +7130,36 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 continue
             }
             item.isHidden = false
-            var text = telemetry.hasSample(source) ? usageLineText(for: source) : MenuTitle.line(source.menuTitle, MenuTitle.warmingUp)
-            if source == activeLoadSource {
-                let speedText = isAutoSpeed ? String(format: "%.2fx", speedMultiplier) : String(format: "fixed %.2fx", speedMultiplier)
-                text += " [Active · \(speedText)]"
-            }
-            item.title = text
+            item.title = telemetry.hasSample(source) ? usageLineText(for: source) : MenuTitle.line(source.menuTitle, MenuTitle.warmingUp)
             item.toolTip = (source == .battery) ? batteryTooltipText() : nil
-            item.state = .off
+            item.state = (source == activeLoadSource) ? .on : .off
         }
-        refreshDrivingSourceMenuState()
+        refreshDiagnosticsState()
+    }
+
+    // Diagnostics ▸ rows, written in the same pass as the root rows so the two levels never disagree
+    // (a root row reading "warming up..." beside a split still showing). Visibility is breakdownText's
+    // call alone — nil hides the row.
+    private func refreshDiagnosticsState() {
+        for (source, item) in diagnosticItems {
+            if let text = breakdownText(for: source) {
+                item.title = MenuTitle.line(source.menuTitle, text)
+                item.isHidden = false
+            } else {
+                item.isHidden = true
+            }
+        }
+        animationSpeedItem.title = MenuTitle.line(
+            MenuTitle.animationSpeed,
+            MenuTitle.animationSpeedValue(speedMultiplier, auto: isAutoSpeed)
+        )
     }
 
     // MARK: - Keep Awake
 
-    // One handler for the merged Keep Awake radio group. Off disengages caffeinate; a color row engages
-    // it (if not already) and sets that tint. Enabled-state and tint are a single choice here.
-    @objc
-    private func selectKeepAwakeOption(_ sender: NSMenuItem) {
-        if sender.tag == Self.keepAwakeOffTag {
-            disarmKeepAwake()
-        } else if let choice = KeepAwakeColor(rawValue: sender.tag) {
-            grantKeepAwakeBatteryOverrideIfOffered()
-            activeKeepAwakeColor = choice
-            if !sleepPreventer.isEnabled { sleepPreventer.setEnabled(true) }
-        }
-        updateSleepPrevention()   // spawns/suspends caffeinate, re-tints the bar, refreshes the group
-        persistState()
-    }
-
     // What "off" means, in one place: intent withdrawn, and with it any armed window, any process the
     // hold was waiting on, and the arm-anyway gesture that authorized it over a low battery. Leaves the
-    // caller to drive updateSleepPrevention() and persistState(), since the Off row folds those into
-    // the same pass that handles the tint rows.
+    // caller to drive updateSleepPrevention() and persistState().
     private func disarmKeepAwake() {
         if sleepPreventer.isEnabled { sleepPreventer.setEnabled(false) }
         clearKeepAwakeWindow()   // Off ends any armed window too
@@ -7169,13 +7167,14 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         keepAwakeBatteryOverride = false   // Off withdraws the arm-anyway gesture with the intent
     }
 
-    // The Option-click quick toggle (R21). Deliberately a shortcut THROUGH the submenu's own two paths rather
-    // than a second implementation of them, so the 5% floor, the battery-override rule and the
-    // single-writer persist all apply to the gesture unchanged and cannot drift from the rows.
+    // The quick toggle behind both the Option-click and the root menu's first row. Deliberately a
+    // shortcut THROUGH armKeepAwake / disarmKeepAwake rather than a second implementation of them, so
+    // the 5% floor, the battery-override rule and the single-writer persist all apply to both gestures
+    // unchanged and cannot drift from the submenu rows.
     //
     // Arms whatever window is currently selected, which is .indefinite unless one is live: a disarm
-    // runs clearKeepAwakeWindow(), which resets the selection to .indefinite — the same default the
-    // submenu's first duration row carries. So the gesture never silently invents a window length.
+    // runs clearKeepAwakeWindow(), which resets the selection to .indefinite — the "Until turned off"
+    // row. So the gesture never silently invents a window length.
     private func toggleKeepAwakeQuick() {
         if sleepPreventer.isEnabled {
             disarmKeepAwake()
@@ -7186,8 +7185,14 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
     }
 
-    // Duration group handler. Reads only its own rows' tags (indices into presetRows) — the sibling
-    // tint group's tag space is selectKeepAwakeOption's business.
+    // The root menu's first row: Start when off, Stop when on — never a re-confirm of a paused hold
+    // (that stays on the window group's ticked row, grantKeepAwakeBatteryOverrideIfOffered).
+    @objc
+    private func toggleKeepAwakeRootAction() {
+        toggleKeepAwakeQuick()
+    }
+
+    // Duration group handler. Reads only its own rows' tags (indices into presetRows).
     @objc
     private func selectKeepAwakeDuration(_ sender: NSMenuItem) {
         let rows = KeepAwakeDuration.presetRows
@@ -7578,7 +7583,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         armKeepAwake(with: .seconds(total))
     }
 
-    // A row in the Battery Threshold group. Tags are indices into Tuning.batteryThresholdRows, with
+    // A row in the Battery Release Threshold group. Tags are indices into Tuning.batteryThresholdRows, with
     // batteryThresholdNeverTag for the Never row.
     @objc
     private func selectBatteryThreshold(_ sender: NSMenuItem) {
@@ -7607,8 +7612,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 Keep Awake stops holding the Mac awake at or below this charge, on battery. \
                 \(Int(Tuning.batteryThresholdMin * Tuning.percentScale))–\
                 \(Int(Tuning.batteryThresholdMax * Tuning.percentScale))%, or 0 to never release on charge \
-                alone. Below \(Int(Tuning.batteryCriticalThreshold * Tuning.percentScale))% the Mac sleeps \
-                regardless.
+                alone. At or below \(Int(Tuning.batteryCriticalThreshold * Tuning.percentScale))% on battery it \
+                always releases.
                 """,
             action: "Apply",
             fields: [PromptField(label: "Percent", value: String(current))]
@@ -7892,7 +7897,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             suspend: effectiveKeepAwakeSuspension != nil,
             remaining: keepAwakeRemainingSeconds
         )
-        refreshKeepAwakeSelectionState()   // move the Off/color mark to match the new intent
+        refreshKeepAwakeSelectionState()   // retitle the first row and move the window mark to match the new intent
         updateKeepAwakeBar()
     }
 

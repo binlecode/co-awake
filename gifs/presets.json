@@ -2,28 +2,6 @@
   "defaultPreset": "horse-white",
   "presets": [
     {
-      "key": "dog-white",
-      "menuTitle": "Dog (White)",
-      "file": "running-dog-white.gif",
-      "speed": {
-        "label": "dog",
-        "min": 0.5,
-        "max": 2.5,
-        "responseExponent": 1.0
-      }
-    },
-    {
-      "key": "dog-black",
-      "menuTitle": "Dog (Black)",
-      "file": "running-dog-black.gif",
-      "speed": {
-        "label": "dog",
-        "min": 0.5,
-        "max": 2.5,
-        "responseExponent": 1.0
-      }
-    },
-    {
       "key": "horse-black",
       "menuTitle": "Horse (Black)",
       "file": "running-horse-black.gif",

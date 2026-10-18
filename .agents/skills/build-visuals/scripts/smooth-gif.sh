@@ -5,7 +5,7 @@
 # Why: GIF only supports 1-bit (on/off) transparency, so every preset stores HARD edges.
 # A preset looks smooth only when its source resolution is HIGHER than the ~40px-tall menu-bar
 # render size, so the app downsamples it (NSImageInterpolation.high anti-aliases on the way down).
-# A low-res source (e.g. the 72x34 dog) gets UPSCALED instead, which keeps the blocky staircase.
+# A low-res source (shorter side under ~120px) gets UPSCALED instead, which keeps the blocky staircase.
 # This script re-scales a GIF up with a smoothing filter and re-binarizes alpha at the new,
 # finer resolution — the shape is preserved, the app now downsamples, edges come out smooth.
 #

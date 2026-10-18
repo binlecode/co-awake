@@ -7,7 +7,7 @@
 #
 # Any extra args are baked into the login item (--preset, --load-source, etc.):
 #   ./scripts/install-login-item.sh
-#   ./scripts/install-login-item.sh --preset dog-black --load-source memory
+#   ./scripts/install-login-item.sh --preset horse-black --load-source memory
 #   ./scripts/install-login-item.sh --keep-awake 4h        # arm Keep Awake at every login
 set -euo pipefail
 

@@ -38,6 +38,47 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-10-18
+
+### Changed
+
+- **Menu restructured around "glance at the values, act in one click".** The root menu holds only
+  primary readings and the actions you use daily; splits and rarely changed settings move one level down.
+  - **One click picks the driving source.** The ten telemetry rows are now a radio group: click a reading
+    to make it drive the animation, and the dot marks the active one. `Selected Metric ▸` is gone, so
+    each action has one entry point. Clicking a *different* row clears the ~24 s Trace history (sources
+    have different units and their histories can't be combined) and saves the new source. Clicking the row that is
+    already selected does nothing. Each root row shows one primary value; the `[Active · 1.25x]`
+    suffix is gone.
+  - **The Keep Awake toggle is the first row.** `Start Keep Awake`, or
+    `Stop Keep Awake · 29:58 left · paused` built from three independent parts: on/off, when it stops (indefinite, timed, or
+    `until <process> exits`), and whether the hold is active or paused. A click runs the same path as
+    ⌥-click, so the 5% floor and the low-battery override gesture are unchanged.
+  - **`Keep Awake For ▸`** lists the durations (30 min … 8 h, then `Until turned off`,
+    `Until a process exits…`, `Custom…`), the countdown status row, and `Battery Release Threshold ▸`
+    (formerly `Battery Safety Floor`). Its parent row shows the current value or `Never`. The `Off` row is
+    gone; turning Keep Awake off is done from the first row.
+  - **`Diagnostics ▸`** collects the sleep-assertion view (This Mac / Other Assertions), the hardware
+    splits (CPU P/E, GPU Renderer/Tiler, swap, per-sensor temperature, per-fan, battery current and
+    health) and the `Animation Speed` multiplier. A split row is shown only when its reader's own
+    validity flags hold (inheriting the reader's existing validity semantics and limitations).
+  - **`Settings ▸`** collects Display Mode, Runner Preset (visible in every display mode; picking one
+    switches back to the GIF), Indicator Bar Tint, Start at Login, and a single update row
+    (`Check for Updates…` / `Checking for Updates…` / `Update to vX.Y.Z…` / `Building vX.Y.Z…`). When a
+    newer tag is known, the root row reads `Settings · Update available`.
+
+### Removed
+
+- **`dog-white` and `dog-black` presets** (and their GIFs). `awake presets` now lists 10, and no
+  compatibility alias is provided.
+  - **Cold start is lenient.** A saved state or LaunchAgent that still says `--preset dog-*` falls back to the
+    default preset `horse-white` with a stderr warning. The app still launches, and the next save
+    overwrites the stale key.
+  - **Forwarding is strict.** `awake --preset dog-black` sent to a running instance **exits 1** and
+    points to `awake presets`. The running instance keeps its preset.
+  - An explicit path to a deleted GIF (`--preset gifs/running-dog-black.gif`) is not downgraded. It
+    reports `GIF file not found`, under the existing bad-GIF contract.
+
 ### Fixed
 
 - **`snapshot` no longer reports a reassuring default it did not read.** A refused

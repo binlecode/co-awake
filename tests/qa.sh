@@ -13,6 +13,7 @@
 #             §3c label slot geometry · §3d other sleep assertions · §3e machine sleep-hold state ·
 #             §3f Keep Awake launch arming · §3g animation driver & display modes · §3h battery diagnostics ·
 #             §3i kernel thermal pressure · §3j `status` live · §3k idempotent `start` ·
+#             §3l removed preset keywords · §3m setter chain & expired-while-paused window ·
 #             §5 reader readouts · §4 error paths. These boot NSApplication + create an NSStatusItem, so
 #             they need an active WindowServer (GUI) session. Fine on a logged-in Mac; best-effort on
 #             hosted runners.
@@ -431,7 +432,7 @@ run "show-all-sources (env)"   "" env CO_AWAKE_SHOW_ALL=1 $BIN --load-source mem
 # carries --no-update-check. A clean-launch row for them would only restate those.
 run "display value"             "" $BIN --display value
 run "display trace"             "" $BIN --display trace
-run "preset key"               "" $BIN --preset dog-black
+run "preset key"               "" $BIN --preset horse-black
 run "custom path + memory"     "" $BIN --preset "$GIF" --load-source memory
 run "env LOAD_SOURCE"          "" env CO_AWAKE_LOAD_SOURCE=network $BIN
 run "env PRESET=<gif>"         "" env CO_AWAKE_PRESET="$GIF" $BIN --load-source disk
@@ -1166,7 +1167,7 @@ SK="$PWD/tmp/qa-start-live"; rm -rf "$SK"; mkdir -p "$SK"
 export CO_AWAKE_STATE_FILE="$SK/state.json" CO_AWAKE_FORCE_BATTERY=100:ac
 setting(){ plutil -extract "$1" raw -o - "$SK/state.json" 2>/dev/null; }
 count(){ pgrep -U "$(id -u)" -f "awake-check( |$)" | wc -l | tr -d ' '; }
-CO_AWAKE_EXIT_AFTER=12 $BIN --no-update-check --preset dog-black >/dev/null 2>&1 & app=$!
+CO_AWAKE_EXIT_AFTER=12 $BIN --no-update-check --preset horse-black >/dev/null 2>&1 & app=$!
 sleep 2
 # Expected lines built first: bash 3.2 splits an escaped quote inside "$(…)" into separate words.
 forwarded="{\"action\":\"forwarded\",\"pid\":$app}"; unchanged="{\"action\":\"unchanged\",\"pid\":$app}"
@@ -1196,7 +1197,7 @@ wait $app
 # A forward that lands while the instance is still booting — before it can listen — is kept for it,
 # not lost and not fatal (SIGUSR1's default action would kill a process that has no handler yet).
 rm -rf "$SK"; mkdir -p "$SK"
-CO_AWAKE_EXIT_AFTER=4 $BIN --no-update-check --preset dog-black >/dev/null 2>&1 & app=$!
+CO_AWAKE_EXIT_AFTER=4 $BIN --no-update-check --preset horse-black >/dev/null 2>&1 & app=$!
 sleep 0.05; $BIN --display value >/dev/null 2>&1; sleep 2
 sk "a forward into a booting instance is applied, and it survives" \
    "$(kill -0 $app 2>/dev/null && [ "$(setting settings.displayMode)" = value ] && echo 1 || echo 0)" "displayMode=$(setting settings.displayMode)"
@@ -1204,6 +1205,81 @@ wait $app
 unset CO_AWAKE_STATE_FILE CO_AWAKE_FORCE_BATTERY
 rm -rf "$SK"
 echo "  start (live): passes=$pass fails=$fail"; total_fail=$((total_fail+fail))
+
+# --- §3l Removed preset keywords [gui] -------------------------------------
+# dog-white / dog-black left the manifest with no alias. A stale keyword still in a state file or a  # removed-preset negative
+# LaunchAgent must not stop an unattended launch, so a bareword degrades to the default preset — and
+# that is asserted on what the instance persisted, not on the warning alone. A path names a concrete
+# file, so it keeps §4's `bad GIF` contract (no fallback, rc 0). A forward is a command just typed,
+# so it is refused outright and the live instance keeps its preset.
+section "§3l removed preset keywords [gui — needs WindowServer]"
+pass=0; fail=0
+RP="$PWD/tmp/qa-removed-preset"; rm -rf "$RP"; mkdir -p "$RP"
+preset(){ plutil -extract settings.preset raw -o - "$RP/state.json" 2>/dev/null; }
+err=$(CO_AWAKE_STATE_FILE="$RP/state.json" CO_AWAKE_EXIT_AFTER=3 $BIN --no-update-check --preset dog-black 2>&1 >/dev/null); rc=$?  # removed-preset negative
+sk "cold-start bareword falls back to the default preset" \
+   "$([ "$rc" = 0 ] && echo "$err" | grep -q 'not a known preset' && echo "$err" | grep -q 'using the default preset "horse-white"' && ! echo "$err" | grep -q 'GIF file not found' && [ "$(preset)" = horse-white ] && echo 1 || echo 0)" \
+   "rc=$rc persisted=$(preset) err=$err"
+rm -rf "$RP"; mkdir -p "$RP"
+err=$(CO_AWAKE_STATE_FILE="$RP/state.json" CO_AWAKE_EXIT_AFTER=1 $BIN --preset gifs/running-dog-black.gif 2>&1 >/dev/null); rc=$?  # removed-preset negative
+sk "explicit path to a removed GIF is not degraded (rc 0, GIF file not found)" \
+   "$([ "$rc" = 0 ] && echo "$err" | grep -q 'GIF file not found' && echo 1 || echo 0)" "rc=$rc err=$err"
+rm -rf "$RP"; mkdir -p "$RP"
+CO_AWAKE_STATE_FILE="$RP/state.json" CO_AWAKE_EXIT_AFTER=5 $BIN --no-update-check --preset horse-black >/dev/null 2>&1 & app=$!
+sleep 2
+err=$(CO_AWAKE_STATE_FILE="$RP/state.json" $BIN --preset dog-black 2>&1 >/dev/null); rc=$?  # removed-preset negative
+alive=$(kill -0 $app 2>/dev/null && echo 1 || echo 0)
+spool=$(ls -A "$RP/intents" 2>/dev/null)
+wait $app; exit_rc=$?
+sk "forwarding a removed keyword exits 1 and leaves the instance's preset alone" \
+   "$([ "$rc" = 1 ] && [ "$alive" = 1 ] && [ "$exit_rc" = 0 ] && echo "$err" | grep -q 'presets' && [ -z "$spool" ] && [ "$(preset)" = horse-black ] && echo 1 || echo 0)" \
+   "rc=$rc alive=$alive exit_rc=$exit_rc spool=$spool persisted=$(preset) err=$err"
+rm -rf "$RP"
+echo "  removed presets: passes=$pass fails=$fail"; total_fail=$((total_fail+fail))
+
+# --- §3m Menu-backed setters & the expired-while-paused window [gui] ------
+# The readout rows are now the driving-source selector, and they call the same setLoadSource the
+# forward path does; a forwarded --load-source is the scriptable proof the setter chain still lands
+# in state.json (the click itself is the manual walk's, § 13). The second case is the lifecycle the
+# first row renders as `Stop Keep Awake · paused` after the deadline: a paused timed window keeps
+# running out, and when the pause clears in the same process the respawn is `caffeinate -t 1`, which
+# ends the intent instead of reviving an indefinite hold. ~65 s: it has to wait a real minute out.
+# Restart-after-expiry is §3f's "expired deadline" row.
+section "§3m setter chain & expired-while-paused window [gui — needs WindowServer]"
+pass=0; fail=0
+MS="$PWD/tmp/qa-menu-setters"; rm -rf "$MS"; mkdir -p "$MS"
+msset(){ plutil -extract "$1" raw -o - "$MS/state.json" 2>/dev/null; }
+CO_AWAKE_STATE_FILE="$MS/state.json" CO_AWAKE_FORCE_BATTERY=100:ac CO_AWAKE_EXIT_AFTER=8 \
+  $BIN --no-update-check --load-source cpu >/dev/null 2>&1 & app=$!
+sleep 2
+CO_AWAKE_STATE_FILE="$MS/state.json" $BIN --load-source memory >/dev/null 2>&1; rc=$?; sleep 0.8
+sk "forwarded --load-source lands through setLoadSource" \
+   "$([ "$rc" = 0 ] && kill -0 $app 2>/dev/null && [ "$(msset settings.loadSource)" = memory ] && echo 1 || echo 0)" \
+   "rc=$rc loadSource=$(msset settings.loadSource)"
+wait $app
+rm -rf "$MS"; mkdir -p "$MS"
+# 15% on battery is under the default 20% band, so the CLI arm (not a gesture: no override) is paused
+# from the start; forwarding --battery-threshold 10 clears the pause without re-arming anything.
+CO_AWAKE_STATE_FILE="$MS/state.json" CO_AWAKE_FORCE_BATTERY=15:battery CO_AWAKE_EXIT_AFTER=75 \
+  $BIN --no-update-check --keep-awake 1m >/dev/null 2>&1 & app=$!
+sleep 63
+before=$(msset keepAwake.enabled)
+CO_AWAKE_STATE_FILE="$MS/state.json" $BIN --battery-threshold 10 >/dev/null 2>&1; rc=$?
+saw_t1=0; after=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  pgrep -P $app -fl caffeinate 2>/dev/null | grep -q -- ' -t 1 ' && saw_t1=1
+  after=$(msset keepAwake.enabled); [ "$after" = false ] && break
+  sleep 0.5
+done
+sk "past the deadline while paused, the intent is still on" \
+   "$([ "$before" = true ] && echo 1 || echo 0)" "enabled before forward=$before"
+sk "clearing the pause ends the expired window (caffeinate -t 1), instance alive" \
+   "$([ "$rc" = 0 ] && [ "$after" = false ] && kill -0 $app 2>/dev/null && echo 1 || echo 0)" "rc=$rc enabled after=$after"
+[ "$saw_t1" = 1 ] && echo "  PASS respawn observed as caffeinate -t 1" \
+  || echo "  NOTE caffeinate -t 1 exited inside the poll interval; the intent check above is the verdict"
+kill $app 2>/dev/null; wait $app 2>/dev/null
+rm -rf "$MS"
+echo "  setters & expiry: passes=$pass fails=$fail"; total_fail=$((total_fail+fail))
 
 # --- §4 Error paths [gui] --------------------------------------------------
 section "§4 error paths (fast, no modal) [gui — needs WindowServer]"
