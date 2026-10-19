@@ -715,6 +715,20 @@ Only ONE representation is active at any time:
 - `.value`: Shows the live monospaced telemetry reading (e.g. `CPU 45%`). The game loop is stopped (0% CPU).
 - **Freeze Handoff:** Under system Reduce Motion with mode set to `.gif`, the item temporarily hands off to `.value` mode so the user receives live telemetry.
 
+```
++-----------------------------------------------------------------------------------------------------------------------+
+|                                        Display Mode Architecture & Cost Matrix                                        |
++----------------+-------------------+--------------------+------------------------+------------------------------------+
+| Mode           | CPU / GPU Cost    | CADisplayLink Loop | Visual Information     | Typical Engineering Scenario       |
++----------------+-------------------+--------------------+------------------------+------------------------------------+
+| .gif (Default) | ~0.8% .. 1.3% CPU | Active (vsync 60Hz)| Ambient macro tempo    | Casual desk companion, macro load  |
+| .trace         | ~0.1% .. 0.2% CPU | 100% STOPPED       | 24s sparkline (12 bars)| Build / compile burst diagnosis    |
+| .value         | ~0.1% .. 0.2% CPU | 100% STOPPED       | Instant precise reading| Minimalist instrument reading      |
++----------------+-------------------+--------------------+------------------------+------------------------------------+
+```
+
+**Cost reduction mechanism:** In both `.trace` and `.value` modes, `syncGameLoopRunning()` stops `CADisplayLink` entirely, completely eliminating display refresh callbacks, texture uploads, and raster frame advances. The application drops into a pure kernel-scheduled sleep state, waking only on the 2.0s telemetry timer for ~0.3ms to take one sample and refresh the slot image or label. Mode `.trace` renders a 45 pt fixed-width 12-bar mini sparkline (`Tuning.labelChartWidth`), mapping each bar to one sample tick ($12 \times 2.0\text{s} = 24\text{s}$ history window) using CoreGraphics in under 0.05 ms.
+
 ### 6.2 Zero-Jitter Reservation Guarantee
 
 1. **Fixed Template Width:** Each mode holds a constant reserved width. Mode `.value` uses `compactLabelText(..., ceiling: true)` and monospaced digits with U+2007 figure-space padding. Mode `.trace` uses fixed 45 pt plot width (`Tuning.labelChartWidth`). Mode `.gif` uses preset aspect ratio width (`slotLength()`).
@@ -785,6 +799,7 @@ plain click and the slot carries `handleStatusItemClick(_:)` the rest of the tim
 | **Keep Awake first row as an `NSSwitch` custom view** | DECLINED | An `NSMenuItem` with a `view` leaves standard target/action dispatch and menu keyboard navigation (arrows + Return), does not close the menu on click, and needs a hand-written AX role — a second interaction model inside one menu. | Standard `NSMenuItem`s only; keyboard and VoiceOver take AppKit's default path. | macOS ships a native, non-custom-view toggle menu item API. |
 | **Hiding `Runner Preset ▸` outside GIF mode** | DECLINED | `selectPreset` switches a non-GIF display back to `.gif`, so choosing a preset shows its effect at once. Hiding it costs two menu round trips (Display Mode → Runner GIF, menu closes, reopen → Runner Preset). | A preset is always discoverable and takes effect in one click. | A preset must stop implying the display mode (e.g. presets start styling the trace). |
 | **Disabling the busy update row with `isEnabled = false`** | DECLINED — the row gets `action = nil` instead (§ 9.2) | `infoMenu` and its submenus keep `autoenablesItems`, so AppKit recomputes enabled state from target/action every time a menu is shown or tracked and overwrites a hand-set `isEnabled`. An action-less item is the one state automatic validation always reports as disabled, independent of timing. A global `validateMenuItem(_:)` would do it too, but it is the validation point for every self-targeted item in the menu — blast radius of the whole menu for one row. | Busy states cannot be clicked into; no app-wide validation hook. | The menu turns off `autoenablesItems`, or a second row needs phase-dependent enablement. |
+| **Configurable refresh interval (`--sample-interval`, or 4s default)** | DECLINED | Steady-state background sampling reads ONLY the active driver for ~0.3 ms per tick. At 2.0 s, duty cycle is ~0.015% CPU; at 4.0 s, duty cycle is ~0.0075% CPU — the saving is ~0.008% of one core, which is invisible to battery life and sleep timers. In exchange, 4.0 s doubles tempo lag (up to 4 s delay before sprinting or idling), stretches the 12-bar trace history from 24 s to 48 s, and makes open-menu reads feel frozen. Real battery reduction is achieved by switching to `.trace` or `.value` mode, which stops the 60 Hz CADisplayLink game loop completely (0% rendering CPU). | Predictable 2s tempo agility without configuration sprawl; 0% CPU achieved through display mode or occlusion, not sluggish sampling. | A measured workload demonstrates that the 0.015% background sampling duty cycle causes measurable battery regression or sleep-wake wake-lock regressions on an idle display. |
 
 ### 6.5 Dropdown Menu Layering
 
@@ -1361,7 +1376,7 @@ Comprehensive reference of values defined in `Tuning`:
 
 | Constant Name | Value | Unit | Functional Role |
 |---|---|---|---|
-| `loadSampleInterval` | `2.0` | Seconds | Telemetry sampling and dashboard refresh period |
+| `loadSampleInterval` | `2.0` | Seconds | Telemetry sampling and dashboard refresh period (not configurable; keeps 2s tempo agility, ~0.015% CPU duty cycle — § 6.4) |
 | `snapshotWindow` | `0.2` | Seconds | Delta window between the two samples `snapshot` takes; the snapshot's whole latency budget (§ 4.7) |
 | `cpuSmoothingAlpha` | `0.2` | Fraction | Exponential moving average alpha for CPU load smoothing |
 | `speedUpdateHysteresis` | `0.08` | Fraction | Minimum load delta required to adjust animation speed |
