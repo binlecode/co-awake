@@ -1,4 +1,6 @@
 #!/usr/bin/env zsh
+# @when: hardware vitals: CPU/GPU load, DRAM bandwidth, temp, battery
+# @keywords: vitals sensors temperature thermal battery power dram bandwidth cpu gpu load health snapshot
 set -euo pipefail
 
 readonly APP_CMD_NAME="awake"
