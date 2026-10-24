@@ -1,21 +1,29 @@
 # CLAUDE.md / AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) and all coding agents working in this repository.
-`AGENTS.md` 与 `CLAUDE.md` 互为符号链接，保持单一正本，编辑任意一个即可。
-保持精炼与高信噪比；详细架构细则、演进历史与外部调研统一归入 `docs/`。
+Shared guidance for Claude Code and coding agents working in this repository.
+`AGENTS.md` 与 `CLAUDE.md` 互为符号链接，保持单一正本。
+给模型读的规矩在这里；给人读的文档在 `README.md` 与 `docs/`。
+
+> 业务概览与用户交互见 `README.md`；架构正本见 `docs/ARCHITECTURE.md`（§0 路由、§4 遥测源、§8 启动与生命周期）；排期认 `docs/ROADMAP.md`。
 
 ---
 
-## ⚠️ 关键陷阱 —— 开工前必看
+## ⚠️ 关键陷阱与不可逾越红线（开工必看）
 
-开工前必须明确以下六条硬底线，**违反会导致进程崩溃、构建并发冲突或破坏核心设计哲学**：
+违反以下硬底线会导致进程崩溃、构建并发冲突、或破坏核心安全模型：
 
-- 🔴 **单文件无包架构（Unbundled Swift）**：所有业务逻辑集中于 `CoAwake.swift`，零外部包依赖，由 `swiftc -O -strict-concurrency=complete` 编译；绝不引入 Xcode 项目、SwiftPM (`Package.swift`)、CocoaPods 或外部第三方库。类均标注 `@MainActor`，构建必须保持零警告。
-- 🔴 **原子重命名编译（Atomic Rename）**：启动脚本 `build` 必须先编译到临时路径再通过 `mv`（`rename(2)`）原子替换目标二进制；严禁在运行中原地覆盖 Mach-O 二进制文件，否则破坏正在运行进程的内存分页导致当场崩溃。
-- 🔴 **单例守卫必须前置于编译（Singleton Guard Before Compile）**：启动器中的 `pgrep -U "$(id -u)"` 检查必须严格在 `compile_if_stale` 之前执行，防止多个并发启动请求同时触发 `swiftc` 写入同一目标路径。
-- 🔴 **零 Mock 真实驱动测试（Zero Mocks / Real Binary Assertions）**：`tests/qa.sh` 是唯一测试套件，必须驱动真实二进制检验真实副作用；严禁在测试中复制业务代码类型；只允许使用无侵入可观测性环境变量（`EXIT_AFTER`, `LOG_*`, `FORCE_BATTERY`, `FORCE_UNAVAILABLE`, `FORCE_THERMAL`, `STATE_FILE`），严禁引入改变业务决策逻辑的 hook。
-- 🔴 **无特权只读遥测与纯用户态（Unprivileged & Read-Only）**：遥测仅限公开或无特权的 Mach / IOKit / SMC 接口，严禁请求 root，严禁通过 `pmset disablesleep` 修改系统全局 NVRAM 电源策略；Keep Awake 仅通过绑定自身 PID 的 `caffeinate -di -w <pid>` 实现，保证进程异常退出时内核自动回收。
-- 🔴 **5% 硬件电池底线不可逾越**：电量 ≤ 5% 时强制释放 Keep Awake，任何 CLI 参数、状态恢复或菜单操作均严禁绕过此硬底线。
+1. 🔴 **单文件无包架构（Unbundled Swift）**：业务逻辑集中于 `CoAwake.swift`，零外部依赖，由 `swiftc -O -strict-concurrency=complete` 编译；绝不引入 Xcode 项目、SwiftPM (`Package.swift`) 或 CocoaPods。类均标注 `@MainActor`，构建保持零警告。
+2. 🔴 **原子重命名编译（Atomic Rename）**：启动器 `build` 必须先编译至临时路径再通过 `mv`（`rename(2)`）原子替换目标二进制；严禁原地覆盖 Mach-O 文件，否则破坏运行中进程的内存分页导致当场崩溃。
+3. 🔴 **单例分流与探测（Singleton Guard）**：`start` 路径的单例探测（`pgrep -U "$(id -u)"`）必须严格在 `compile_if_stale` 之前执行；`build` 与只读查询（`snapshot`/`status`/`presets`/`--help`）按 `docs/ARCHITECTURE.md` §2 直接分流，不参与单例互斥。
+4. 🔴 **零 Mock 真实驱动测试（Zero Mocks / Real Binary Assertions）**：`tests/qa.sh` 是唯一测试套件，必须驱动真实二进制检验副作用；严禁在测试中复制业务代码类型；只允许使用无侵入环境变量（详见 `docs/ARCHITECTURE.md` §11.3）：
+   - `FORCE_THERMAL` 仅供显示层，**严禁回流自限流与功耗判定**；
+   - `LOG_*` 只允许读取并打印，**严禁回写被测状态**；
+   - 手动 GUI 验证必须指定独立 `CO_AWAKE_STATE_FILE`，严禁污染真实用户配置。
+5. 🔴 **无特权只读遥测与纯用户态（Unprivileged & Read-Only）**：遥测仅限公开或无特权的 Mach / IOKit / SMC 接口，严禁请求 root，严禁通过 `pmset` 篡改系统全局电源配置；Keep Awake 仅通过绑定自身 PID 的 `caffeinate -di -w <pid>` 实现，保证异常退出时内核自动回收。
+6. 🔴 **5% 硬件电池底线不可逾越**：电量 ≤ 5% 时强制释放 Keep Awake，任何 CLI 参数、状态恢复或菜单操作均严禁绕过此硬底线。
+7. 🔴 **状态持久化单写者模型**：`state.json` 只能由 `persistState()` 统一驱动，禁止在局部 observer 或高频采样循环中自行写盘。
+8. 🔴 **动词 CLI 与单一输出契约**：首参只放动词（`start`·`status`·`snapshot`·`presets`·`build`）；输出只有一份 Schema，字段自带物理单位，缺读数一律缺键（不补 0 或 null）；严禁新增兼容别名或双前缀回退。
+9. 🔴 **脚本兼容性**：启动器与周边脚本必须严格保证 `/bin/bash` 3.2 与 macOS 原生 `/bin/zsh` 兼容性。
 
 ---
 
@@ -23,165 +31,43 @@ This file provides guidance to Claude Code (claude.ai/code) and all coding agent
 
 **有疑问或做技术选型时，严格按两步执行，顺序不可颠倒：**
 
-1. **先 grounding** —— 查真实代码（`CoAwake.swift`、`co-awake`）、核查真实运行输出与可观测性探针（`CO_AWAKE_EXIT_AFTER`, `LOG_*`），深入代码实现与真实终端输出，**严禁凭空假设向下推演**。
+1. **先 grounding** —— 查真实代码（`CoAwake.swift`、`awake`）、核查真实运行输出与可观测性探针（`CO_AWAKE_EXIT_AFTER`, `LOG_*`），深入代码实现与真实终端输出，**严禁凭空假设向下推演**。
 2. **再确认** —— 严禁静默新增/废弃 CLI 参数、修改 `state.json` 数据结构、私自放宽安全门控或重新解释既有设计。若实测推翻了前提，如实报送发现并提问，**不要自行改动设计范围或重排优先级**。
+3. **测试纪律** —— 临时文件必须入 `tmp/`；环境无法测定时输出 NOTE，绝不谎称覆盖或造假 PASS。
 
 ---
 
-## 项目性质
-
-**co-awake** —— 原生 macOS 状态栏动态负载可视化与轻量级诊断监控套件（Swift + AppKit）。
-
-- **单文件 + 原生启动脚本**：`CoAwake.swift` (~8.3k 行) + 原生 zsh 启动脚本 `co-awake`，无需 Xcode / SwiftPM，直截了当。
-- **动态帧率自适应**：10 种无特权硬件遥测源（CPU、内存+Swap、DRAM 总线带宽、GPU、网络、磁盘、风扇、电池放电电流、芯片结温、神经引擎功耗）驱动状态栏 GIF 变速播放。
-- **平滑归一化与自限流**：移植自 `btop` 的 `ThroughputScaler` 自适应非对称迟滞缩放无界速率；高热/低电量/内存压力下自动减半自身帧率；全遮挡（刘海/隐藏/灭屏）0% CPU 暂停；支持系统 Reduce Motion（启用时读数自动交接给标签栏）。
-- **进程生命周期防休眠**：内置基于 `caffeinate -di -w <pid>` 的 Keep Awake 与 `IOPMCopyAssertionsByProcess` 外部断言嗅探器。
-
----
-
-## 文档分工（先读，别重复摸索）
-
-全部架构与生命周期文档统一位于 `docs/`。根目录只留 `README.md`（人的入口）和 `CLAUDE.md` / `AGENTS.md`（Agent 指令）。
-
-- 🔴 **全文档唯一正本路由在 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §0**，这是架构伞文档。
-- 🔴 **未决候选议题与待做特性只认 [`docs/ROADMAP.md`](docs/ROADMAP.md)**。
-- 🔴 **已建成架构细则、系统边界与记录在案的拒绝决策/NO 正本在 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**。本文不维护第二份产品设计/架构细则。
-
-### 文档命名与 ADLC 流水线硬规矩
-
-| 文种 | 命名规范 | 职责与生命周期 |
-|---|---|---|
-| **路线图** | `docs/ROADMAP.md` | 悬着的候选议题总表（候选议题 `R<n>`、排期）；只记跟踪与设计落点，不记流水账；议题落成即移出 |
-| **计划书** | `docs/PLAN-<topic>.md` | 单项特性的设计与实施草案；**主体做完蒸馏入 `docs/ARCHITECTURE.md` 后当场 `git rm` 删除**（绝不留存归档） |
-| **架构正本** | `docs/ARCHITECTURE.md` | 系统已建成架构的正本（why 与 how，不重复代码中的 what）；包含 §0 路由表、系统拓扑、子系统规约、系统边界/拒绝决策与参数基线 |
-| **用户手册** | `docs/RUNBOOK-user-manual.md` | 随系统存活；面向人（状态栏）与 Agent（`snapshot` / `status`）的使用场景、读数解读、CLI 速查与 FAQ；只讲「何时、怎么用」，机制与取舍留在 `ARCHITECTURE.md`，旗标全集以 `awake --help` 为准 |
-| **外部调研** | `docs/RESEARCH-<topic>.md` | 外部竞品与业界生态调研及实测数据（**不入 ADLC 链**，不 land、不改名、不退休，供决策参考，测量过时后清理或重测） |
-
-- **严禁新建文种**：没有 `REPORT-`、`DESIGN-`、`TODO-`、`LESSONS`、`RUNBOOK-` 或 `JOURNAL`。
-- **系统结构图硬规则**：一律使用纯 ASCII 字符（`+ - | = v ^ < >`）绘制，严禁使用制表符（`┌─│`），对齐严格按 CJK 双倍字宽计算。
-- **修改文档正文一律使用编辑工具（Edit）**，严禁使用 `sed` 破坏文档排版。
-- **一个事实只在一处声明 (One fact, one place)**：文档严禁复制代码中已有陈述的 what；文档只记录 why 与 how，并跨文件交叉引用。
-- 🔴 **第一性原理：文档是写给人（工程师）读的，代码是写给模型（和机器）读的。**
-  - **分工定位**：代码负责精确（What & How —— 符号、类型、字段、控制流与语法树），IDE 跳转与 grep 永远比文档准；文档负责**人类工程师的认知建模（Why、Topology、Boundary、Invariants & Tradeoffs）**。
-  - **严禁代码翻版（AST 翻译腔）**：凡是代码里一眼看得到的（参数名、类型、字段列表、退出码、条件分支的逐行复述），文档一字不抄；凡是代码里看不出来的（为什么这么设计、放弃了什么替代方案、防范了哪类事故、跨模块不变量），文档一句不漏。把代码逻辑用汉字重述一遍是零信息量的伪文档。
-  - **工程师终极判据**：大白话、短、准确；解释现行逻辑就像当面说一遍：它是什么 → 为什么这么干 → 代价（Trade-off）是什么。一个新工程师读完一份 ARCH，合上电脑能不能当面向另一位工程师讲清楚核心机制、数据流向、接缝边界和设计权衡？**人看完能复述才算写成**；满篇细节却讲不清架构，写得再工整也是垃圾。
-  - **技术决策必须落到底层物理现实与内核调度机理**：严禁空洞的形式主义、循环论证或口号式陈述（例如只写「违反自限流原则」却不给出底层物理机理）。必须讲透硬件物理约束（如速率计数器的离散差分积分时间窗 $\Delta t$）、内核生命周期与调度（Mach port/PID 死亡生命周期回收 vs NVRAM 持久变异、Mach task 遍历的上下文切换开销与观察者效应、CLPC 片上闭环自主调频 vs 缺失的软件寄存器）、虚拟内存与进程安全（mmap 需求分页映射 vs 原地覆盖 Mach-O 内存分页崩溃）。
-  - **拒绝决策（负向空间）三要素闭环**：拒绝一项设计必须同时明确**物理/内核机理（Why Not）**、**所守护的核心不变量（Protected Invariant）**与**明确可证伪的重新立项前提（Re-Proposal Condition）**，绝不搞不可撼动的教条主义。
-- **拒绝决策归位架构负向空间，路线图彻底去噪**：
-  - `docs/ROADMAP.md` 永远保持极致轻量，仅记录待办候选（`R<n>`）的跟踪落点与优先级；**严禁在路线图中沉积 Declined 提案、设计辩论或系统定性陈述**。
-  - 任何设计决议一旦落地或被否决，其正向规约或负向边界必须直接蒸馏入 `docs/ARCHITECTURE.md`（由所辖子系统规约与边界表就地持有），从 `ROADMAP.md` 中当场移出。
-- **边界就地闭环，严禁跨节双重复写（Strict One Fact, One Place）**：
-  - 子系统规约节内直接用结构化表格界定所有权与负向边界（`Module / Boundary | Owns | Not its business`），记录在案的 NO、底层物理/内核机理与重开触发器由各子系统就地声明闭环。
-  - **严禁设立脱离业务模块的「拒绝提案总表/公墓」**：同文档内一个边界只声明一次，杜绝在子系统写过之后又在文末附录全文复述，保持高信息密度。
-  - **语言技术化去噪**：剔除口语化吐槽、情绪化辞藻与历史包袱，通篇保持客观、严密、高信息密度的系统工程语言。
-  - **严禁将路标跟踪编号（`R<n>`）引入架构正本**：`R<n>` 纯粹是 `docs/ROADMAP.md` 与进行中计划书 `docs/PLAN-*.md` 的过程工单代号。`docs/ARCHITECTURE.md` 是面向工程师的现行架构正本，所有子系统、标题、规约与负向总表一律使用正式技术名（如 `snapshot` 快照、P/E 簇拆分、进程绑定睡眠），严禁在标题或正文中保留 `(R24)`、`(R27)` 等过期路标编号，杜绝误导读者。
-
-🔴 **一份设计文档（`PLAN-` / `ARCHITECTURE.md` 的子系统节）先答清四件事，顺序就是这个顺序**：
-
-| 要素 | 写什么 | 判据 |
-|---|---|---|
-| 模块 | 这一块管什么 | 一句话说得完 |
-| 边界 | 哪些事不归它、归谁 | 逐行给出正本落点，别人不用猜；负向边界必须用第一性原理解释为何不归它、归谁所有，并明确重开触发器 |
-| 接口 | 对外的旗标 / 输出 / 退出码 + 前后置条件与不变量 | 别人照它接，不用读实现 |
-| 参数与阈值 | 名 · 默认 · 单位 · 作用 · 住在哪（二进制 / 启动脚本 / 输出） | 读表的人不查代码就能跑起来 |
-
-- 🔴 **参数全表**：引入或改动任何旋钮，都要有这张表；受影响的既有参数一并入表；互斥与前置关系写进表，**配置冲突必须启动时报错，严禁静默忽略**。落地后并入 `docs/ARCHITECTURE.md` §11。
-- 🔴 **只写现行态**：文档里不留「改为 / 曾经 / 翻案 / 某日改的 / 旧形态是」。变更史在 git 与 `CHANGELOG.md`；日期只在两处合法 —— 实测数据取数当天、以及 `PLAN-` 顶部的 grounding 日期。
-- 🔴 **不许拿未验证源码或行号当实测事实**：引用代码一律用符号名，**严禁写行号**（每次发版就烂）；没跑过的数字不写进文档，写了就标明「待测」。
-
----
-
-## 常用命令
+## 常用命令速查
 
 ```bash
-# 启动与运行（首参是动词，缺省即 start；start 幂等：已有实例则把设置转发给它）
-./awake                          # start：已保存设置或默认预设，后台脱离终端运行
+# 启动与运行（首参是动词，缺省即 start；start 幂等）
+./awake                          # start：后台脱离终端运行
 ./awake --foreground             # 前台运行（查看 stderr / print 输出）；已有实例时报错
-./awake --preset horse-black --display value # 指定预设 + 状态栏数值读数（运行中即热切换）
-./awake --load-source bandwidth  # 以 DRAM 总线带宽 (GB/s) 驱动动画
 ./awake snapshot                 # 单行 JSON 快照（物理单位），随即退出；无 GUI / 无 state.json / 无编译
 ./awake status                   # 单行 JSON：是否有常驻实例、Keep Awake 状态
-./awake presets                  # 单行 JSON：内置预设（取自 gifs/presets.json）
+./awake presets                  # 单行 JSON：内置预设
 ./awake --help                   # 唯一 help 由二进制生成，不列预设
 
 # 编译与无启动检查
 ./awake build                    # 仅当源码较新时原子编译，不启动（保持运行实例不损坏）
 swiftc -O -strict-concurrency=complete CoAwake.swift -o tmp/coaware-check  # 快速编译检查
 
-# 自动化测试与调试钩子（均无需 TCC / 辅助功能权限）
-CO_AWAKE_EXIT_AFTER=5 ./tmp/coaware-check --load-source memory           # 运行 5s 自行退出 (exit 0)
-CO_AWAKE_FORCE_BATTERY=15:battery ./tmp/coaware-check --keep-awake 30m   # 模拟低电量 / 电池状态
-CO_AWAKE_LOG_SLOTS=1 ./tmp/coaware-check --display value 2>&1 | grep SLOTS # 打印状态栏槽位屏幕几何与宽度
-CO_AWAKE_LOG_ASSERTIONS=1 ./tmp/coaware-check 2>&1 | grep ASSERTIONS     # 打印过滤与防抖后的外部睡眠断言
-CO_AWAKE_LOG_AWAKE=1 ./tmp/coaware-check 2>&1 | grep AWAKE               # 打印睡眠阻止综合判定与菜单行文本
-CO_AWAKE_LOG_ANIMATION=1 ./tmp/coaware-check 2>&1 | grep ANIM           # 打印动画冻结状态与游标
-CO_AWAKE_LOG_BATTERY_DIAGNOSTICS=1 ./tmp/coaware-check 2>&1 | grep BATTERY_DIAG  # 打印电池健康度/循环次数/容量（启动一次 + 每次开菜单）
-CO_AWAKE_FORCE_THERMAL=serious ./tmp/coaware-check --load-source temperature  # 模拟内核热压力等级
-CO_AWAKE_LOG_THERMAL=1 ./tmp/coaware-check 2>&1 | grep THERMAL         # 打印内核热压力、温度行文本与自限流行状态
+# 自动化测试门禁
+tests/qa.sh --core               # 核心门禁（CI 友好，不依赖 WindowServer，秒级）
+tests/qa.sh                      # 全量回归测试（需要活跃 WindowServer / GUI 会话）
+tests/qa.sh --launcher           # 破坏性测试（需所有者明确授权，会 pkill 正在运行的实例）
 
-# 自动化测试套件
-tests/qa.sh --core                           # 核心门禁（CI 友好，不依赖 WindowServer，秒级）
-tests/qa.sh                                 # 全量回归测试（需要活跃 WindowServer / GUI 会话）
-tests/qa.sh --launcher                       # 包含启动器单例与原子替换破坏性测试（会 pkill 实例）
-
-# 开机自启 LaunchAgent（基于 scripts/ 已有脚本，勿手写 plist）
-./scripts/install-login-item.sh [flags]            # 安装并启动用户 LaunchAgent（如 --preset horse-black）
-./scripts/uninstall-login-item.sh                  # 卸载 LaunchAgent
-
-# 进程清理
-pkill -f 'CoAwake'                 # 停止当前用户正在运行的实例
+# 常用调试钩子（无侵入可观测性，参数全集见 docs/ARCHITECTURE.md §11.3）
+CO_AWAKE_EXIT_AFTER=5 ./tmp/coaware-check --load-source memory           # 运行 5s 自行退出
+CO_AWAKE_FORCE_BATTERY=15:battery ./tmp/coaware-check --keep-awake 30m   # 模拟低电量
+CO_AWAKE_FORCE_THERMAL=serious ./tmp/coaware-check --load-source temperature # 模拟内核热等级（仅限显示）
+CO_AWAKE_LOG_ASSERTIONS=1 ./tmp/coaware-check 2>&1 | grep ASSERTIONS     # 嗅探外部睡眠断言
 ```
 
 ---
 
-## 架构要点（正本见 docs/ARCHITECTURE.md）
+## 文档分工与生命周期
 
-- **动词优先 CLI 与幂等 start** (`docs/ARCHITECTURE.md` §2, §8.4, §11.2)：首参只放动词（`start`·`status`·`snapshot`·`presets`·`build`），设置一律具名旗标；`start` 有常驻实例时校验后经 `intents/` 逐请求落盘 + `SIGUSR1` 转发，只启动时生效的旗标一律报错；help 只有一份、由二进制生成；旧写法一律报错并给出替代写法，不设兼容别名。
-- **遥测核心与单发快照** (`docs/ARCHITECTURE.md` §4.7)：全部读数由 `TelemetryCore` 统一持有，GUI 与 `snapshot` 两条入口路径共用同一套 reader，互不定义；`snapshot` 只输出一份 schema（缺读数即缺键），且不接受任何参数。
-- **10 种无特权硬件遥测源** (`docs/ARCHITECTURE.md` §4)：CPU (Mach，含 P/E 簇拆分，簇归属取自 IODeviceTree `cluster-type`，严禁按 `hw.perflevel` 序号切片)、Memory + Swap (Mach `vm_statistics64`)、DRAM 带宽 (`IOReport` "PMP"/"DCS BW" 的 `AMCC…RD+WR` 残留直方图，按桶**中点**加权求均，正本见 §4.8)、GPU (IOAccelerator，含 Renderer/Tiler 拆分)、Network/Disk (IOKit 计数器增量)、Fan RPM (SMC)、Battery mA (IOKit PS)、Max Die Temp (SMC 二分查找 `Tp**`/`Tpx*` 传感器集群最大值)、ANE Watts (`IOReport` "Energy Model" 订阅式增量采样)。`IOReport` 是唯一的私有 API，由 `IOReportClient` 单点 `dlopen`/`dlsym` 绑定、各 reader 各自窄订阅（正本见 §4.5）。每种源均具备 `isAvailable` 探测，不可用时平滑降级。
-- **ThroughputScaler 速率归一化** (`docs/ARCHITECTURE.md` §4.2)：无界速率（网速/磁盘/swap/电池电流）经自适应滑动窗口归一化到 0..1，双向非对称裕量 + 迟滞计数器防抖；有界百分比与绝对温度映射不走 Scaler。
-- **CADisplayLink 与自限流** (`docs/ARCHITECTURE.md` §3, §5)：屏幕刷新率同步的 vsync 游戏循环；全遮挡（刘海/隐藏/灭屏）时完全暂停渲染（0% CPU）；高热/低电量/内存压力下自动减半自身帧率；支持系统 Reduce Motion（启用时读数自动交接给标签栏）。
-- **Keep Awake 睡眠阻止与外部断言嗅探** (`docs/ARCHITECTURE.md` §7)：通过 `SleepPreventer` 启动 `caffeinate -di -w <pid>` 绑定进程生命周期；支持预设/自定义定时窗口（跨重启恢复）；底线 5% 电池保护；通过 `IOPMCopyAssertionsByProcess` 嗅探系统其他进程断言，两段式归因排布（This Mac vs This App）。
-- **单状态栏项极简显示架构** (`docs/ARCHITECTURE.md` §6)：状态栏在 Runner GIF (`gif`)、Trace Chart (`trace`) 与实时数值 (`value`) 间严格互斥三选一，彻底消除双槽位散射与视觉杂讯，通过预留宽度与花样空格（U+2007）严格防抖。
-- **状态持久化单点守恒** (`docs/ARCHITECTURE.md` §8.2)：`~/Library/Application Support/co-awake/state.json` 由 `persistState()` 统一全量写盘，持久化意图（Intent）而非易失运行状态。
-- **预设注册表与自更新** (`docs/ARCHITECTURE.md` §9)：动图配置完全由 `gifs/presets.json` 驱动；自更新先 `git pull --ff-only` 再执行 `build` 原子编译，最后在弹窗提示后由 detached 脚本完成重启。
-
-### 添加内置预设流程
-1. 将优化裁剪好的 GIF 放入 `gifs/<name>.gif`（必须透明背景、紧凑边界）。
-2. 在 `gifs/presets.json` 的 `presets` 数组中添加配置项（指定 `key`、`menuTitle`、`file`、`speed` 范围与指数）。
-3. 运行 `./co-awake --preset <name>` 验证宽高比适配与各档位动画速度（`presets` 与 help 自动跟随 manifest，无需改代码）。
-4. 运行 `tests/qa.sh --core` 确认解析无误。
-
----
-
-## 改动时的红线
-
-动手改动代码前必须确认以下九项硬约束：
-
-1. **严禁引入构建系统或外部运行时依赖**：坚守单文件 Swift 架构与原生启动脚本，`-strict-concurrency=complete` 必须保持零警告。
-2. **严禁破坏无特权只读原则**：遥测只能通过系统公开/免提权接口读取；严禁请求 root，严禁通过 `pmset` 篡改系统全局电源配置。
-3. **严禁在测试中引入 mock 或行为注入**：测试必须通过 `tests/qa.sh` 驱动真实二进制；禁止在测试中复制业务代码类型；禁止新增改变业务决策路径的测试 hook。
-4. **严禁原地覆盖正在运行的二进制**：预编译与更新流程必须编译到临时文件后通过 `mv` 原子重命名替换，防止破坏运行中进程的内存分页。
-5. **单例守卫必须前置于编译**：启动脚本必须在编译前执行 `pgrep -U "$(id -u)"`，防止多实例并发编译写入同一输出。
-6. **Keep Awake 5% 电池保护底线不可逾越**：电量 ≤ 5% 必须无条件释放断言，任何 CLI 参数、状态恢复或菜单点击均严禁绕过此底线。
-7. **严禁破坏状态持久化单写者模型**：`state.json` 的写盘只能由 `persistState()` 统一驱动，禁止在局部 observer 或高频采样循环中自行写盘。
-8. **一个事实只在一处声明与第一性原理**：详细架构机制、参数与负向边界一律由 `docs/ARCHITECTURE.md` 各子系统规约节独家持有（边界就地闭环，不设集中拒绝总表）；技术决策以物理与内核机理说明 why 与 why not；严禁同文档跨节双重复述；落地后立即删除对应 `PLAN-*.md`；`docs/ROADMAP.md` 仅留待办候选 `R<n>`。
-9. **接口按第一性原理最小化 —— 先减后加**：一件事只给一个入口，严禁为同一件事开出「简版 / 全版 / 人读版」三个旗标；新旗标必须先证明两档都得长期活着，证不出就是常量；输出只有一份 schema，字段名自带单位，缺读数一律**缺键**而不是补 0 或 `null`；无意义的参数组合一律**启动报错**，不许静默忽略。改名、加兼容别名、加双前缀回退都不是能力，单独立项单独拍板。
-
----
-
-## 测试与回归约定
-
-- **驱动真实二进制**：`tests/qa.sh` 是唯一的自动化回归测试套件，分级运行：`--core`（语法、编译、CLI 解析与版本基线，无 GUI 依赖）、默认（包含 GUI 状态栏与断言检查）、`--launcher`（启动器单例与并发测试）。
-- **只使用无侵入可观测性钩子**：`CO_AWAKE_EXIT_AFTER`（生命周期截断）、`FORCE_BATTERY`（模拟电量）、`FORCE_UNAVAILABLE`（模拟遥测源缺失）、`FORCE_THERMAL`（模拟内核热压力等级，仅供显示层，严禁回流自限流判定）、`LOG_SLOTS` / `LOG_ASSERTIONS` / `LOG_AWAKE` / `LOG_ANIMATION` / `LOG_BATTERY_DIAGNOSTICS` / `LOG_THERMAL`（日志输出内部判定）。禁止任何改变业务决策逻辑的 hook —— `LOG_*` 只允许读取并打印，严禁回写被打印的状态字段（否则会让菜单在未打开时走上不该走的渲染分支）。
-- **环境无法测定时输出 NOTE，绝不造假 PASS/FAIL**：例如屏幕拥挤、无电池桌面机、系统自带睡眠断言等外部不可控状态，如实输出 NOTE。
-- **严禁谎称覆盖**：测试无法测定的系统边界必须诚实声明，绝不引入虚假断言。
-
----
-
-## 环境与规范
-
-- **运行平台**：macOS 14+ 完整支持（macOS 12/13 降级为 60Hz Timer）。
-- **语言与并发**：Swift 5 模式，`-strict-concurrency=complete` 零警告；UI 与状态强绑定 `@MainActor`。
-- **启动器与脚本**：严格保证 `/bin/bash` 3.2 与 macOS 原生 `/bin/zsh` 兼容性。
-- **版本规范**：遵循 SemVer 2.0.0，以 Git Tag（`vX.Y.Z`）驱动更新发现与发布。
+- **路由正本**：全文档唯一正本路由在 `docs/ARCHITECTURE.md` §0。未决候选议题认 `docs/ROADMAP.md`。
+- **现行态唯一性**：文档只记录现行态机制与 why，严禁保留已删除特性的历史墓碑；变更史留给 git 与 `CHANGELOG.md`。
+- **ADLC 闭环**：单项特性草案使用 `docs/PLAN-<topic>.md`，主体完成并蒸馏入 `docs/ARCHITECTURE.md` 后当场 `git rm` 删除。
