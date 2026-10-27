@@ -40,10 +40,8 @@ Assembles `tmp/cover-dist/` and self-scores: path rewrite (`../gifs/`→`gifs/`)
 paths, self-contained assets (no broken `src`), outbound links (expect only the repo URL), and prints
 the version badge. Exits non-zero on any failure. Optionally eyeball it: `open tmp/cover-dist/index.html`.
 
-**Version badge:** `docs/cover.html` carries a footer badge (`vX.Y.Z`) that is **not** covered by
-the QA version-parity check, so it drifts silently (it has lagged a release before). Bump it in
-`docs/cover.html` when you cut a release, rebuild, and redeploy so the public page matches the shipped
-version. The script prints the badge it bundled — confirm it matches.
+**Version badge:** `docs/media/cover.html` uses `{{VERSION}}` placeholders (`v{{VERSION}}`), which
+`build-cover-dist.sh` automatically populates from the root `VERSION` file and verifies before exit.
 
 ## 2. Deploy
 

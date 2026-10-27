@@ -38,6 +38,14 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.2] - 2026-10-27
+
+### Changed
+
+- **Single-sourced version in `VERSION`.** `AppInfo.version` reads the root `VERSION` file at
+  startup and `build-cover-dist.sh` injects it into the cover bundle, eliminating manual version
+  duplication across `CoAwake.swift`, `README.md`, `docs/ARCHITECTURE.md`, and `docs/media/cover.html`.
+
 ## [3.1.1] - 2026-10-27
 
 ### Fixed

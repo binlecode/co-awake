@@ -25,12 +25,15 @@ DIST=tmp/cover-dist
 fail=0
 
 [ -f "$COVER" ] || { echo "FAIL: $COVER not found (is this the repo root?)"; exit 1; }
+[ -f VERSION ] || { echo "FAIL: VERSION file not found at repo root"; exit 1; }
+VER=$(tr -d '[:space:]' < VERSION)
+[[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "FAIL: invalid semver in VERSION ($VER)"; exit 1; }
 
 # --- 1. assemble the bundle ---
 rm -rf "$DIST" && mkdir -p "$DIST/gifs"
 grep -oE 'gifs/[A-Za-z0-9._-]+\.gif' "$COVER" | sort -u | sed 's#gifs/##' \
   | while read -r g; do cp "gifs/$g" "$DIST/gifs/$g" 2>/dev/null || echo "WARN: gifs/$g referenced but missing"; done
-sed 's#\.\./gifs/#gifs/#g' "$COVER" > "$DIST/index.html"
+sed -e 's#\.\./gifs/#gifs/#g' -e "s#{{VERSION}}#$VER#g" "$COVER" > "$DIST/index.html"
 
 echo "--- bundle contents ---"; find "$DIST" -type f | sort
 
@@ -52,9 +55,14 @@ done < <(grep -oE 'src="[^"]+"' "$DIST/index.html" | sed 's/src="//;s/"//' | gre
 echo "--- outbound links ---"
 grep -oE 'href="https?://[^"]+"' "$DIST/index.html" | sort -u
 
-# --- version badge (drifts silently; confirm it matches the release you are shipping) ---
+# --- version badge (injected from VERSION) ---
 echo "--- version badge in bundle ---"
-grep -oE 'class="badge">v[0-9.]+' "$DIST/index.html" | sed 's/class="badge">//' || echo "(no version badge found)"
+BADGE=$(grep -oE 'class="badge">v[0-9.]+' "$DIST/index.html" | sed 's/class="badge">//' || true)
+echo "${BADGE:-(no version badge found)}"
+if [ "$BADGE" != "v$VER" ] || grep -q '{{VERSION}}' "$DIST/index.html"; then
+  echo "FAIL: expected badge v$VER with no unreplaced {{VERSION}} placeholder"
+  fail=1
+fi
 
 echo
 if [ "$fail" -eq 0 ]; then

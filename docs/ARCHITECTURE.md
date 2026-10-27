@@ -1,7 +1,7 @@
 # ARCHITECTURE — As-Built System Architecture & Technical Specifications
 
-> **Canonical as-built architecture document for co-awake (v3.1.1).**
-> **Source ground truth:** `CoAwake.swift`, `co-awake` (launcher), `gifs/presets.json`.
+> **Canonical as-built architecture document for co-awake.**
+> **Source ground truth:** `CoAwake.swift`, `awake` (launcher), `VERSION`, `gifs/presets.json`.
 > **Scope:** Complete architectural specifications, subsystem topologies, concurrency models, telemetry algorithms, and system invariants.
 
 ---
@@ -1412,8 +1412,8 @@ Comprehensive reference of values defined in `Tuning`:
 | `batteryThresholdMin` · `batteryThresholdMax` | `0.06` · `1.0` | Fraction | Custom threshold range; the minimum sits above the 5% floor |
 | `menuSelectionMarkCapHeightFraction` | `0.6` | Cap-height fraction | Size of the selection dot used by every radio group, including the readout rows (§ 6.5) |
 
-`AppInfo.version` (`3.1.1`) is the version baseline the update probe compares against; it lives in the
-binary and moves with four other surfaces (§ 13). `gifs/presets.json` `defaultPreset` (`horse-white`) is
+`AppInfo.version` (read from root `VERSION` at startup) is the version baseline the update probe compares
+against (§ 13). `gifs/presets.json` `defaultPreset` (`horse-white`) is
 the cold-start fallback for an unknown preset keyword (§ 9.1).
 
 ### 11.2 Command-Line Interface (CLI) Parameters
@@ -1508,29 +1508,27 @@ self-restraint — it only ever reads the system, and the only thing it throttle
 
 ## 13. Release Hygiene & Delivery Discipline
 
-A version bump moves five surfaces together: `AppInfo.version`, the `CHANGELOG.md` heading, the
-`README.md` version line, the `docs/media/cover.html` badge, and the git tag `UpdateChecker` reads.
-`tests/qa.sh` §2 enforces the first four; the tag is deliberately unchecked (qa.sh runs before it
-exists), so **pushing the commit and tag is the last manual step**. One rule with no other home: **the
-tag gates the prompt; the branch carries the code** — a behavioral change committed *after* its release
-tag is an undeliverable fix (`UpdateChecker` sees equal versions and offers nothing), resolved only by
-the next bump across all five surfaces. Never re-cut a published tag.
+The release version is single-sourced in the root `VERSION` file. `AppInfo.version` reads `VERSION` at
+process startup, and `.agents/skills/publish-cover/scripts/build-cover-dist.sh` injects `VERSION` into
+`docs/media/cover.html` (`{{VERSION}}`) when building the Cloudflare Pages bundle — so neither
+`CoAwake.swift`, `README.md`, `docs/ARCHITECTURE.md`, nor `docs/media/cover.html` duplicates the version
+string. Cutting a release touches only `VERSION`, the `CHANGELOG.md` release heading, and the git tag
+`UpdateChecker` reads. `tests/qa.sh` §2 enforces `VERSION` + `CHANGELOG.md` + `--help`; the tag is
+deliberately unchecked (qa.sh runs before it exists), so **pushing the commit and tag is the last manual
+step**. One rule with no other home: **the tag gates the prompt; the branch carries the code** — a
+behavioral change committed *after* its release tag is an undeliverable fix (`UpdateChecker` sees equal
+versions and offers nothing), resolved only by the next bump. Never re-cut a published tag.
 
 **Cutting a release, in this order.** Steps 2, 3 and 6 look skippable and are not — each fails
 silently, and nothing upstream catches it:
 
-1. Bump `AppInfo.version`; move `CHANGELOG.md`'s `[Unreleased]` items into a dated section.
+1. Bump `VERSION`; move `CHANGELOG.md`'s `[Unreleased]` items into a dated `## [X.Y.Z]` section.
    MAJOR/MINOR/PATCH follow the public-API definition at the top of `CHANGELOG.md` (CLI flags, env
    vars, preset keywords + `presets.json` schema, observable behavior).
-2. Give `docs/media/cover.html` the release's **prose**, not just its badge, then redeploy (the
-   `publish-cover` skill; `npx wrangler whoami` first — the OAuth token usually persists, so no
-   interactive login is needed). qa.sh §2 greps the badge and nothing else, so a cover describing the
-   *previous* release passes every check while the badge reads as proof it is current. Its interactive
-   demos need the same pass and fail differently: they model app behavior in JS, so a stale demo goes
-   on *reproducing* the bug this release fixed — prose drift reads as stale, a stale demo reads as a
-   specification. Click the demo for whatever you changed.
-3. **Re-run `tests/qa.sh --core`** — §2 can only compare the version surfaces *after* you have edited
-   them; skip it and a mistyped surface ships silently.
+2. If the release changes user-visible behavior shown on `docs/media/cover.html`, update its prose/demos,
+   then redeploy (the `publish-cover` skill; `build-cover-dist.sh` automatically stamps `VERSION` into
+   the `{{VERSION}}` placeholders).
+3. **Re-run `tests/qa.sh --core`** — §2 verifies `VERSION`, `--help`, `CHANGELOG.md`, and the cover template.
 4. Tag `vX.Y.Z` — the fifth surface, and the only unchecked one.
 5. Push the commit **and** the tag: `git push origin main vX.Y.Z`.
 6. **Confirm it shipped with the command the app itself polls:**

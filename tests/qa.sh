@@ -175,12 +175,14 @@ fi
 # version must agree with it, or a release ships a stale one silently. The git
 # tag is the fifth surface and is deliberately NOT checked: qa.sh runs *before* the tag exists, so
 # asserting it would fail every pre-release run. See docs/ARCHITECTURE.md § 13.
-VER=$(grep -Eo 'static let version = "[0-9]+\.[0-9]+\.[0-9]+"' CoAwake.swift | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+')
-vchk(){ grep -q "$2" "$3" && { echo "  PASS $1 shows $VER"; pass=$((pass+1)); } || { echo "  FAIL $1 missing $VER ($3)"; fail=$((fail+1)); }; }
+# Version is single-sourced in VERSION. The binary reads VERSION at startup, CHANGELOG.md records the
+# release section, and docs/media/cover.html carries {{VERSION}} placeholders injected by build-cover-dist.sh.
+VER=$(tr -d '[:space:]' < VERSION 2>/dev/null || true)
+[[ "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && { echo "  PASS VERSION is valid semver ($VER)"; pass=$((pass+1)); } || { echo "  FAIL VERSION invalid ($VER)"; fail=$((fail+1)); }
+vchk(){ grep -q "$2" "$3" && { echo "  PASS $1"; pass=$((pass+1)); } || { echo "  FAIL $1 ($3)"; fail=$((fail+1)); }; }
 $BIN --help 2>&1 | grep -q "co-awake $VER" && { echo "  PASS --help shows $VER"; pass=$((pass+1)); } || { echo "  FAIL --help missing $VER"; fail=$((fail+1)); }
-vchk "CHANGELOG"   "## \[$VER\]"                     CHANGELOG.md
-vchk "README"      "Current version: \*\*$VER\*\*"   README.md
-vchk "cover badge" ">v$VER<"                         docs/media/cover.html
+vchk "CHANGELOG shows $VER"            "## \[$VER\]"        CHANGELOG.md
+vchk "cover uses {{VERSION}} template" ">v{{VERSION}}<"     docs/media/cover.html
 echo "  parse: passes=$pass fails=$fail"; total_fail=$((total_fail+fail))
 else
 skip "§2 CLI parse paths [core]" "core tier not selected (--gui)"

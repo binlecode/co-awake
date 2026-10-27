@@ -7,10 +7,24 @@ import IOKit.ps
 import IOKit.pwr_mgt
 import QuartzCore
 
-// Human-facing app version (semver). Surfaced in --help and the About dialog, and the anchor for
-// CHANGELOG.md releases. Bump this together with a new CHANGELOG entry and git tag.
+// Human-facing app version (semver), single-sourced from the root VERSION file and latched at
+// process startup so a live instance keeps its pre-pull version across an in-app git pull until it
+// restarts. Surfaced in --help and the About dialog, and the anchor for CHANGELOG.md and git tags.
 private enum AppInfo {
-    static let version = "3.1.1"
+    static let version: String = {
+        let execDir = Bundle.main.executableURL?.deletingLastPathComponent()
+        let fileDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let cwdDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        let candidates = [execDir, execDir?.deletingLastPathComponent(), fileDir, cwdDir].compactMap { $0 }
+        for dir in candidates {
+            let url = dir.appendingPathComponent("VERSION")
+            if let raw = try? String(contentsOf: url, encoding: .utf8) {
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        return "0.0.0"
+    }()
     static let name = "co-awake"
     static let tagline = "An animated GIF in the macOS menu bar, its playback speed driven by live system load."
     static let copyright = "© 2026 Bin Le"
@@ -8295,6 +8309,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 // not a GUI at all (a `status`, a `snapshot`, another `start`), must survive being picked as the target.
 // The GUI replaces this with a dispatch source once it can listen (setupSignalHandler).
 signal(SIGUSR1, SIG_IGN)
+_ = AppInfo.version
 
 switch Config.parse() {
 case .snapshot:
