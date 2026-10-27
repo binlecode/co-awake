@@ -10,7 +10,7 @@ speed tracks system load (or a trace chart, or a live number), and toggle Keep A
 — DRAM bus bandwidth, memory pressure, die temperature, P/E-core split, GPU, Neural Engine power, fans,
 battery — read without privileges and without touching the menu bar.
 
-Current version: **3.1.0** (see [`CHANGELOG.md`](CHANGELOG.md)).
+Current version: **3.1.1** (see [`CHANGELOG.md`](CHANGELOG.md)).
 
 **Cover page:** [co-awake.pages.dev](https://co-awake.pages.dev)
 

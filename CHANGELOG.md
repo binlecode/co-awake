@@ -38,6 +38,21 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-10-27
+
+### Fixed
+
+- **M1–M3 die temperature discovery no longer picks synthetic trip-offset keys (`Tp*z`).** On chips
+  without `Tpx*` cluster-maximum keys (e.g. M1 `MacBookAir10,1`), `TemperatureLoadMonitor` fell back
+  to the full 28-key `Tp**` family, whose `Tp<N>z` entries carry a fixed +12…+17 °C offset above the
+  core sensor (`Tp<N>a`). Discovery now prefers `Tpx*` (M4+), then `Tp*a` (M1–M3 per-core sensors),
+  and excludes `*z`/`*b` offset keys on the final fallback.
+- **Detached `animationView` and `countdownLabel` from `NSStatusBarButton` in `.trace` and `.value`
+  modes.** Keeping hidden layer-backed subviews attached inside `statusItem.button.subviews` caused
+  AppKit's `NSStatusItem` replicant snapshotter (`_updateReplicantsUnlessMenuIsTracking:`) to re-dirty
+  the button backing layer on every pass after a Screen Sharing or multi-display session, spinning
+  ~30% CPU until relaunch.
+
 ## [3.1.0] - 2026-10-18
 
 ### Changed

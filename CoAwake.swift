@@ -10,7 +10,7 @@ import QuartzCore
 // Human-facing app version (semver). Surfaced in --help and the About dialog, and the anchor for
 // CHANGELOG.md releases. Bump this together with a new CHANGELOG entry and git tag.
 private enum AppInfo {
-    static let version = "3.1.0"
+    static let version = "3.1.1"
     static let name = "co-awake"
     static let tagline = "An animated GIF in the macOS menu bar, its playback speed driven by live system load."
     static let copyright = "© 2026 Bin Le"
@@ -2862,12 +2862,11 @@ private final class FanLoadMonitor {
 //      the plausible range and read hottest — so any key added here earns its place by MOVING under
 //      load, not by reading a sane number once.
 //
-//   3. Tpx* preferred over the full Tp** family, for cost. These are the per-cluster maxima: across an
-//      idle → 1-core → 8-core → 16-core → cooldown ramp, max(Tpx*) equalled max over all 102 Tp** keys
-//      in 22 of 22 samples, at 2.3 ms a tick against 20 ms. 20 ms every 2 s is ~1% of a core, which
-//      would roughly triple this app's own CPU — untenable for an indicator whose whole premise is not
-//      adding to the load it visualizes. A chip publishing no Tpx* falls back to the whole family; the
-//      driver is max() either way, so the fallback costs time, not accuracy.
+//   3. Tpx* (M4+ per-cluster maxima) or Tp*a (M1–M3 per-core raw sensors) preferred over the full
+//      Tp** family, for both cost and accuracy. On M4 Max, max(Tpx*) equalled max over all 102 Tp** keys
+//      in 22 of 22 samples, at 2.3 ms a tick against 20 ms. On M1, each core publishes a quartet
+//      (Tp<N>a raw, Tp<N>x peak-hold, Tp<N>b +9 °C bias, Tp<N>z +17 °C trip-offset); selecting Tp*a
+//      (and excluding *z/*b on the final fallback) avoids the synthetic offsets and reads 7 keys instead of 28.
 //
 // Normalization is a THIRD category, neither a bounded percentage nor an unbounded rate: a fixed
 // floor/ceiling map (Tuning.temperatureFloorCelsius…temperatureCeilingCelsius), NOT ThroughputScaler.
@@ -2943,8 +2942,9 @@ private final class TemperatureLoadMonitor {
             return false
         }
         let family = smc.floatKeys(withPrefix: "Tp")
-        let clusterMaxima = family.filter { $0.name.hasPrefix("Tpx") }
-        sensorKeys = clusterMaxima.isEmpty ? family : clusterMaxima
+        let tpxMaxima = family.filter { $0.name.hasPrefix("Tpx") }
+        let coreSensors = tpxMaxima.isEmpty ? family.filter { $0.name.hasSuffix("a") } : tpxMaxima
+        sensorKeys = coreSensors.isEmpty ? family.filter { !$0.name.hasSuffix("z") && !$0.name.hasSuffix("b") } : coreSensors
         available = !sensorKeys.isEmpty
         return available
     }
@@ -6756,6 +6756,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             if button.image != nil { button.image = nil }
             if !button.title.isEmpty { button.title = "" }
             if button.attributedTitle.length > 0 { button.attributedTitle = NSAttributedString() }
+            if let av = animationView, av.superview !== button {
+                button.addSubview(av)
+            }
             if animationView?.isHidden != false { animationView?.isHidden = false }
 
             let gifW = slotLength()
@@ -6768,6 +6771,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             animationView?.frame = NSRect(x: 0, y: 0, width: gifW, height: btnH)
 
             if let cd = countdown {
+                if countdownLabel.superview !== button {
+                    button.addSubview(countdownLabel)
+                }
                 if countdownLabel.stringValue != cd { countdownLabel.stringValue = cd }
                 let labelColor = tintColor ?? .labelColor
                 if countdownLabel.textColor != labelColor { countdownLabel.textColor = labelColor }
@@ -6781,15 +6787,17 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 if countdownLabel.isHidden { countdownLabel.isHidden = false }
             } else {
                 if !countdownLabel.isHidden { countdownLabel.isHidden = true }
+                if countdownLabel.superview != nil { countdownLabel.removeFromSuperview() }
             }
             renderCurrentFrame()
-            button.needsDisplay = true
             let cdSpoken = countdown.map { ", \($0) remaining" } ?? ""
             button.setAccessibilityLabel("co-awake — \(spokenReading(for: activeLoadSource))\(cdSpoken)")
 
         case .trace:
             if animationView?.isHidden != true { animationView?.isHidden = true }
+            if animationView?.superview != nil { animationView?.removeFromSuperview() }
             if !countdownLabel.isHidden { countdownLabel.isHidden = true }
+            if countdownLabel.superview != nil { countdownLabel.removeFromSuperview() }
             if !button.title.isEmpty { button.title = "" }
             if button.attributedTitle.length > 0 { button.attributedTitle = NSAttributedString() }
 
@@ -6806,16 +6814,16 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             }
             button.image = makeTraceChartImage(countdown: countdown, appearance: button.effectiveAppearance)
             if button.imagePosition != .imageOnly { button.imagePosition = .imageOnly }
-            button.needsDisplay = true
             let cdSpoken = countdown.map { ", \($0) remaining" } ?? ""
             button.setAccessibilityLabel("co-awake — \(spokenReading(for: activeLoadSource)) trace chart\(cdSpoken)")
 
         case .value:
             if animationView?.isHidden != true { animationView?.isHidden = true }
+            if animationView?.superview != nil { animationView?.removeFromSuperview() }
             if !countdownLabel.isHidden { countdownLabel.isHidden = true }
+            if countdownLabel.superview != nil { countdownLabel.removeFromSuperview() }
             if button.image != nil { button.image = nil }
             if button.imagePosition != .noImage { button.imagePosition = .noImage }
-            button.needsDisplay = true
 
             let baseText = compactLabelText(for: activeLoadSource)
             let displayText: String
@@ -6839,17 +6847,16 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 statusItem.length = totalW
             }
 
-            button.title = displayText
-            if let color = tintColor {
-                button.attributedTitle = NSAttributedString(
-                    string: displayText,
-                    attributes: [.foregroundColor: color, .font: Self.labelFont]
-                )
-            } else {
-                button.attributedTitle = NSAttributedString(
-                    string: displayText,
-                    attributes: [.foregroundColor: NSColor.labelColor, .font: Self.labelFont]
-                )
+            let targetColor = tintColor ?? NSColor.labelColor
+            if button.title != displayText {
+                button.title = displayText
+            }
+            let nextAttr = NSAttributedString(
+                string: displayText,
+                attributes: [.foregroundColor: targetColor, .font: Self.labelFont]
+            )
+            if button.attributedTitle != nextAttr {
+                button.attributedTitle = nextAttr
             }
             button.setAccessibilityLabel(displayText.replacingOccurrences(of: "\u{2007}", with: ""))
         }

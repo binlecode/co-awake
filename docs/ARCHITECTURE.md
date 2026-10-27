@@ -1,6 +1,6 @@
 # ARCHITECTURE — As-Built System Architecture & Technical Specifications
 
-> **Canonical as-built architecture document for co-awake (v3.1.0).**
+> **Canonical as-built architecture document for co-awake (v3.1.1).**
 > **Source ground truth:** `CoAwake.swift`, `co-awake` (launcher), `gifs/presets.json`.
 > **Scope:** Complete architectural specifications, subsystem topologies, concurrency models, telemetry algorithms, and system invariants.
 
@@ -234,7 +234,7 @@ The application includes ten unprivileged telemetry monitors, owned by `Telemetr
 | MemoryLoadMonitor      | host_statistics64()       | Pages, swapins/outs   | max(RAM%, ScaledSwap); idle floor 0.55   |
 | GPULoadMonitor         | IORegistry IOAccelerator  | Device utilization %  | Direct percentage (0.0..1.0); Rend/Tiler |
 | SMCClient (Fan)        | AppleSMCKeysEndpoint      | F{n}Ac / F{n}Mx RPM   | RPM / Max RPM (fan mean percentage)      |
-| SMCClient (Temp)       | AppleSMCKeysEndpoint      | Tp** / Tpx* max °C    | Fixed 30°C .. 100°C linear clamp         |
+| SMCClient (Temp)       | AppleSMCKeysEndpoint      | Tpx* / Tp*a max °C    | Fixed 30°C .. 100°C linear clamp         |
 | NetworkLoadMonitor     | getifaddrs() (AF_LINK)    | Interface byte deltas | ThroughputScaler (Bytes/Sec, floor 1MB/s)|
 | DiskLoadMonitor        | IOBlockStorageDriver      | Drive byte deltas     | ThroughputScaler (Bytes/Sec, floor 4MB/s)|
 | BatteryLoadMonitor     | IOKit Power Sources       | Discharge mA, %       | ThroughputScaler (Discharge mA, floor 0.5A)
@@ -332,7 +332,7 @@ fields, so they agree with each other (§ 4.7).
 ```
 
 - **Binary Search Key Table Discovery:** Instead of sequential table scans (~600ms) or guesswork, `SMCClient.floatKeys(withPrefix:)` uses binary search across the ascending SMC key table (~20ms), discovering dynamic fan (`F{n}Ac`) and temperature (`Tp**`) keys across Intel and Apple Silicon chips.
-- **Die Temperature Mapping:** Reads hottest cluster maxima (`Tpx*` cluster maximum sensors on Apple Silicon). Bounded strictly between $30^\circ\text{C}$ and $100^\circ\text{C}$ (`Tuning.temperatureFloorCelsius` to `temperatureCeilingCelsius`):
+- **Die Temperature Mapping:** Reads hottest cluster/core sensors (`Tpx*` cluster maxima on M4+, falling back to `Tp*a` per-core sensors on M1–M3 and excluding synthetic `*z`/`*b` offset keys). Bounded strictly between $30^\circ\text{C}$ and $100^\circ\text{C}$ (`Tuning.temperatureFloorCelsius` to `temperatureCeilingCelsius`):
   $$\text{loadFraction} = \text{clamp}\left(\frac{T_{\text{max}} - 30.0}{100.0 - 30.0}, 0.0, 1.0\right)$$
 
 ### 4.4 The Adaptive `ThroughputScaler` (btop Hysteresis)
@@ -727,7 +727,7 @@ Only ONE representation is active at any time:
 +----------------+-------------------+--------------------+------------------------+------------------------------------+
 ```
 
-**Cost reduction mechanism:** In both `.trace` and `.value` modes, `syncGameLoopRunning()` stops `CADisplayLink` entirely, completely eliminating display refresh callbacks, texture uploads, and raster frame advances. The application drops into a pure kernel-scheduled sleep state, waking only on the 2.0s telemetry timer for ~0.3ms to take one sample and refresh the slot image or label. Mode `.trace` renders a 45 pt fixed-width 12-bar mini sparkline (`Tuning.labelChartWidth`), mapping each bar to one sample tick ($12 \times 2.0\text{s} = 24\text{s}$ history window) using CoreGraphics in under 0.05 ms.
+**Cost reduction mechanism:** In both `.trace` and `.value` modes, `syncGameLoopRunning()` stops `CADisplayLink` entirely and `updateDisplaySlot()` detaches `animationView` and `countdownLabel` from `statusItem.button.subviews` (preventing AppKit `NSStatusItem` replicant snapshot passes from dirtying layer-backed subviews during or after Screen Sharing / multi-display sessions). The application drops into a pure kernel-scheduled sleep state, waking only on the 2.0s telemetry timer for ~0.3ms to take one sample and refresh the slot image or label. Mode `.trace` renders a 45 pt fixed-width 12-bar mini sparkline (`Tuning.labelChartWidth`), mapping each bar to one sample tick ($12 \times 2.0\text{s} = 24\text{s}$ history window) using CoreGraphics in under 0.05 ms.
 
 ### 6.2 Zero-Jitter Reservation Guarantee
 
@@ -1412,7 +1412,7 @@ Comprehensive reference of values defined in `Tuning`:
 | `batteryThresholdMin` · `batteryThresholdMax` | `0.06` · `1.0` | Fraction | Custom threshold range; the minimum sits above the 5% floor |
 | `menuSelectionMarkCapHeightFraction` | `0.6` | Cap-height fraction | Size of the selection dot used by every radio group, including the readout rows (§ 6.5) |
 
-`AppInfo.version` (`3.1.0`) is the version baseline the update probe compares against; it lives in the
+`AppInfo.version` (`3.1.1`) is the version baseline the update probe compares against; it lives in the
 binary and moves with four other surfaces (§ 13). `gifs/presets.json` `defaultPreset` (`horse-white`) is
 the cold-start fallback for an unknown preset keyword (§ 9.1).
 
