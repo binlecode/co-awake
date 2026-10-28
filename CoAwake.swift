@@ -3288,6 +3288,7 @@ struct BatteryDiagnostics: Equatable, Sendable {
     let cycleCount: Int
     let maxDesignCycles: Int
     let healthPercent: Int
+    let exactHealthPercent: Double
     let nominalCapacityMilliampHours: Int?
     let designCapacityMilliampHours: Int?
     let rawCapacityMilliampHours: Int?
@@ -3311,34 +3312,43 @@ enum BatteryDiagnosticsReader {
             return nil
         }
 
+        if let installed = (dict["BatteryInstalled"] as? NSNumber)?.boolValue, !installed {
+            return nil
+        }
+
         guard let cycleCount = (dict["CycleCount"] as? NSNumber)?.intValue else {
             return nil
         }
 
-        let maxCap = (dict["MaxCapacity"] as? NSNumber)?.intValue
+        let batteryData = dict["BatteryData"] as? [String: Any]
+        let rawMaxCap = (dict["MaxCapacity"] as? NSNumber)?.intValue
+        // On Apple Silicon, top-level MaxCapacity is always 100 (the 0..100 SoC denominator for
+        // CurrentCapacity, not battery health); only legacy Intel Macs report raw mAh (> 100) there.
+        let legacyMaxCap = (rawMaxCap != nil && rawMaxCap! > 100) ? rawMaxCap : nil
         let designCap = (dict["DesignCapacity"] as? NSNumber)?.intValue
-        let nominalCap = (dict["NominalChargeCapacity"] as? NSNumber)?.intValue ?? maxCap
-        let rawCap = (dict["AppleRawMaxCapacity"] as? NSNumber)?.intValue ?? nominalCap
+            ?? (batteryData?["DesignCapacity"] as? NSNumber)?.intValue
+        let fullChargeCap = (dict["AppleRawMaxCapacity"] as? NSNumber)?.intValue
+            ?? (batteryData?["FullChargeCapacity"] as? NSNumber)?.intValue
+            ?? (batteryData?["AppleRawMaxCapacity"] as? NSNumber)?.intValue
+        let nominalCap = (dict["NominalChargeCapacity"] as? NSNumber)?.intValue
+            ?? (batteryData?["NominalChargeCapacity"] as? NSNumber)?.intValue
+            ?? fullChargeCap
+            ?? legacyMaxCap
+        let rawCap = fullChargeCap ?? nominalCap
         let maxDesignCycles = (dict["DesignCycleCount9C"] as? NSNumber)?.intValue ?? 1000
-        let failureStatus = (dict["PermanentFailureStatus"] as? NSNumber)?.intValue ?? 0
+        let failureStatus = (dict["PermanentFailureStatus"] as? NSNumber)?.intValue
+            ?? (batteryData?["PermanentFailureStatus"] as? NSNumber)?.intValue
+            ?? readPackPermanentFailureStatus()
+            ?? 0
 
-        let healthPct: Int
-        if let maxCap {
-            if maxCap <= 100 {
-                healthPct = max(0, min(100, maxCap))
-            } else if let designCap, designCap > 0 {
-                let nominal = nominalCap ?? maxCap
-                healthPct = max(0, min(100, Int(round(Double(nominal) / Double(designCap) * 100.0))))
-            } else {
-                healthPct = 100
-            }
-        } else if let nominalCap, let designCap, designCap > 0 {
-            healthPct = max(0, min(100, Int(round(Double(nominalCap) / Double(designCap) * 100.0))))
-        } else {
-            healthPct = 100
+        guard let effectiveCap = rawCap ?? nominalCap, effectiveCap > 0,
+              let designCap, designCap > 0 else {
+            return nil
         }
+        let exactHealthPct = max(0.0, min(100.0, Double(effectiveCap) / Double(designCap) * 100.0))
+        let healthPct = Int(round(exactHealthPct))
 
-        let isService = healthPct < 80 || failureStatus != 0
+        let isService = exactHealthPct < 80.0 || failureStatus != 0
         let condition: String
         if failureStatus != 0 {
             condition = "Permanent Failure"
@@ -3352,12 +3362,29 @@ enum BatteryDiagnosticsReader {
             cycleCount: cycleCount,
             maxDesignCycles: maxDesignCycles,
             healthPercent: healthPct,
+            exactHealthPercent: exactHealthPct,
             nominalCapacityMilliampHours: nominalCap,
             designCapacityMilliampHours: designCap,
             rawCapacityMilliampHours: rawCap,
             isServiceRecommended: isService,
             conditionText: condition
         )
+    }
+
+    private static func readPackPermanentFailureStatus() -> Int? {
+        let pack = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSmartBatteryPack"))
+        guard pack != 0 else { return nil }
+        defer { IOObjectRelease(pack) }
+        var props: Unmanaged<CFMutableDictionary>?
+        guard IORegistryEntryCreateCFProperties(pack, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let dict = props?.takeRetainedValue() as? [String: Any] else {
+            return nil
+        }
+        if let top = (dict["PermanentFailureStatus"] as? NSNumber)?.intValue {
+            return top
+        }
+        let packData = dict["BatteryData"] as? [String: Any]
+        return (packData?["PermanentFailureStatus"] as? NSNumber)?.intValue
     }
 }
 
@@ -3994,7 +4021,7 @@ private final class TelemetryCore {
                 snap.batteryAmps = batteryMonitor.currentDischargeMilliamps / Tuning.milliampsPerAmp
             }
             if let diag = BatteryDiagnosticsReader.readDiagnostics() {
-                snap.batteryHealthPercent = Double(diag.healthPercent)
+                snap.batteryHealthPercent = diag.exactHealthPercent
                 snap.batteryCycles = diag.cycleCount
             }
         }
@@ -6120,8 +6147,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             return memoryPressureText()
         case .battery:
             if let diag = batteryDiagnostics {
-                if let nom = diag.nominalCapacityMilliampHours, let des = diag.designCapacityMilliampHours, des > 0 {
-                    return "\(diag.conditionText) · \(nom)/\(des) mAh"
+                if let cap = diag.rawCapacityMilliampHours ?? diag.nominalCapacityMilliampHours,
+                   let des = diag.designCapacityMilliampHours, des > 0 {
+                    return "\(diag.conditionText) · \(cap)/\(des) mAh"
                 }
                 return diag.conditionText
             }
@@ -6292,12 +6320,12 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         var lines: [String] = []
         lines.append("Battery Health: \(diag.healthPercent)% (\(diag.conditionText))")
         lines.append("Cycle Count: \(diag.cycleCount) / \(diag.maxDesignCycles)")
-        if let nom = diag.nominalCapacityMilliampHours, let des = diag.designCapacityMilliampHours, des > 0 {
-            let pct = (Double(nom) / Double(des)) * 100.0
-            lines.append(String(format: "Maximum Capacity: %d mAh / %d mAh (%.1f%%)", nom, des, pct))
+        if let cap = diag.rawCapacityMilliampHours ?? diag.nominalCapacityMilliampHours,
+           let des = diag.designCapacityMilliampHours, des > 0 {
+            lines.append(String(format: "Maximum Capacity: %d mAh / %d mAh (%.1f%%)", cap, des, diag.exactHealthPercent))
         }
-        if let raw = diag.rawCapacityMilliampHours {
-            lines.append("Raw Measured Capacity: \(raw) mAh")
+        if let nom = diag.nominalCapacityMilliampHours {
+            lines.append("Nominal Capacity: \(nom) mAh")
         }
         return lines.joined(separator: "\n")
     }

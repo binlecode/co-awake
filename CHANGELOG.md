@@ -38,6 +38,18 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.3] - 2026-10-27
+
+### Fixed
+
+- **Apple Silicon `battery_health_pct` and mAh capacity diagnostics no longer hardcode `100%`.**
+  On Apple Silicon Macs, top-level `AppleSmartBattery` `MaxCapacity` is always `100` (the 0–100%
+  state-of-charge denominator for `CurrentCapacity`), while real mAh capacities (`FullChargeCapacity`,
+  `NominalChargeCapacity`, `DesignCapacity`) live inside the nested `BatteryData` dictionary.
+  `BatteryDiagnosticsReader` now reads `BatteryData` mAh capacities first and computes real health
+  percentage (`FullChargeCapacity / DesignCapacity`, e.g. `85.9%` on a 360-cycle M1 Air instead of
+  `100.0%`).
+
 ## [3.1.2] - 2026-10-27
 
 ### Changed

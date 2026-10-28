@@ -1027,7 +1027,7 @@ if echo "$diag" | grep -q 'unavailable'; then
   echo "  NOTE [battery diagnostics unavailable on this machine (desktop Mac or virtual environment)]"
 else
   bk "real battery diagnostics output matches expected schema" \
-     "$(echo "$diag" | grep -qE 'cycles=[0-9]+ health=[0-9]+% nominal=[0-9]+mAh design=[0-9]+mAh condition=(Normal|Service Recommended|Permanent Failure)' && echo 1 || echo 0)" \
+     "$(echo "$diag" | grep -qE 'cycles=[0-9]+ health=[0-9]+% nominal=[1-9][0-9]{2,}mAh design=[1-9][0-9]{2,}mAh condition=(Normal|Service Recommended|Permanent Failure)' && echo 1 || echo 0)" \
      "got: $diag"
 fi
 
