@@ -217,9 +217,10 @@ private enum Builder {
 // launchd-supervised one both reparent to pid 1), so each launch path leaves a signal:
 //   - launchd: no env marker works — a LaunchAgent job's XPC_SERVICE_NAME is "0", not the job label
 //     (verified; it is the obvious-looking signal and it is wrong). Instead launchd is *asked*: it
-//     reports the job's pid, and because the plist runs the launcher which `exec`s the binary, that pid
+//     reports the job's pid, and because the plist runs the compiled binary directly (with
+//     CO_AWAKE_LAUNCHER in EnvironmentVariables so Builder still builds through the launcher), that pid
 //     IS ours when we are the agent's process.
-//   - the launcher: exports CO_AWARENESS_LAUNCHER / _LAUNCH_MODE, so a detached run knows the
+//   - the launcher: exports CO_AWAKE_LAUNCHER / _LAUNCH_MODE, so a detached run knows the
 //     script to re-run.
 // Anything else — a `--foreground` run, a raw binary, an unrecognized environment — is `.unsupported`
 // and simply gets no Restart button: a foreground run belongs to the shell waiting on it.
@@ -364,8 +365,11 @@ private enum Restarter {
     // enough here because the waiter writes only after we have quit, so nothing of ours is still
     // appending. nullDevice if the file can't be opened: losing the note beats losing the restart.
     private static func logHandle() -> FileHandle {
+        let defaultPath = NSString(string: "~/Library/Logs/co-awake.log").expandingTildeInPath
         let path = ProcessInfo.processInfo.environment["CO_AWAKE_LOG_FILE"]
-            ?? "/tmp/co-awake.log"
+            ?? defaultPath
+        let dir = (path as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: path) {
             FileManager.default.createFile(atPath: path, contents: nil)
         }

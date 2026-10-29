@@ -64,6 +64,7 @@ compile_if_stale() {
     return 0
   fi
   if swiftc -O -strict-concurrency=complete "$swift_src" -o "$swift_bin.new" >/dev/null 2>&1; then
+    codesign -fs - -i com.binle.coawake "$swift_bin.new" >/dev/null 2>&1 || true
     mv -f -- "$swift_bin.new" "$swift_bin"
     return 0
   fi
@@ -208,7 +209,7 @@ main() {
   # out from under the shell that started it. LAUNCHER is also what the app runs `build` through, so
   # the swiftc invocation lives in this file only.
   if (( launch_detached )); then
-    log_file="${CO_AWAKE_LOG_FILE:-/tmp/co-awake.log}"
+    log_file="${CO_AWAKE_LOG_FILE:-$HOME/Library/Logs/co-awake.log}"
     mkdir -p -- "$(dirname -- "$log_file")"
     CO_AWAKE_BIN_NAME="$APP_CMD_NAME" \
     CO_AWAKE_LAUNCHER="$launcher_path" \

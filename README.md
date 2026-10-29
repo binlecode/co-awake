@@ -97,7 +97,7 @@ The first argument is a command; leave it out and it means `start`:
   `--keep-awake`, `--keep-awake-pid`, `--battery-threshold` — sent to a running instance apply live.
   Launch-only flags (`--speed-multiplier`, `--show-all-sources`, `--no-update-check`, `--foreground`)
   are refused while it runs. `--extra` starts an additional instance that never writes the state file.
-- **Logs.** A detached launch writes to `/tmp/co-awake.log` (override with `CO_AWAKE_LOG_FILE`);
+- **Logs.** A detached or login-item launch writes to `~/Library/Logs/co-awake.log` (override with `CO_AWAKE_LOG_FILE`);
   `--foreground` keeps output in your terminal.
 - **Stop.** Menu → `Exit`, or `pkill -f CoAwake`.
 
@@ -195,8 +195,9 @@ manual's scenario 3 for the `-i` vs `-di` tradeoff).
 
 ## Start at login
 
-A per-user LaunchAgent — no root, no `.app` bundle, no signing. Toggle **Start at Login** in the menu,
-or from the shell:
+A per-user LaunchAgent supervising the compiled `CoAwake` Mach-O binary directly (`adhoc`-signed as
+`com.binle.coawake`) — no root, no `.app` bundle, no Apple Developer certificate required. Toggle
+**Start at Login** in the menu, or from the shell:
 
 ```bash
 ./scripts/install-login-item.sh                                           # default preset

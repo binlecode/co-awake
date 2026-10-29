@@ -66,7 +66,7 @@ if [ -e "$PLIST" ]; then
     "$INSTALL_DIR/scripts/uninstall-login-item.sh" || warn "login-item uninstall reported an error"
   else
     launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-    rm -f "$PLIST" "/tmp/$LABEL.log"
+    rm -f "$PLIST" "$HOME/Library/Logs/co-awake.log" "/tmp/$LABEL.log" "/tmp/co-awake.log"
     ok "Removed $PLIST"
   fi
 fi

@@ -15,14 +15,14 @@ done
 
 LABEL="com.binle.coawake"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-LOG="/tmp/$LABEL.log"
+LOG="$HOME/Library/Logs/co-awake.log"
 DOMAIN="gui/$(id -u)"
 
 # bootout reverses bootstrap: stops the supervised process and removes the registration.
 # (We never use `launchctl disable`, which would leave a persistent override behind.)
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 rm -f "$PLIST"
-rm -f "$LOG"
+rm -f "$LOG" "/tmp/$LABEL.log" "/tmp/co-awake.log"
 
 echo "Removed login item: $LABEL"
 echo "  deregistered; plist + log deleted; nothing else was installed."

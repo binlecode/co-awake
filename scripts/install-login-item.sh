@@ -22,10 +22,11 @@ done
 
 LABEL="com.binle.coawake"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-LOG="/tmp/$LABEL.log"
+LOG_DIR="$HOME/Library/Logs"
+LOG="$LOG_DIR/co-awake.log"
 DOMAIN="gui/$(id -u)"
 
-# Resolve this script's real directory (following symlinks) -> repo root -> launcher.
+# Resolve this script's real directory (following symlinks) -> repo root -> launcher + binary.
 src="${BASH_SOURCE[0]}"
 while [ -h "$src" ]; do
   dir="$(cd -P "$(dirname "$src")" && pwd)"
@@ -35,32 +36,38 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "$src")" && pwd)"
 REPO_DIR="$(cd -P "$SCRIPT_DIR/.." && pwd)"
 LAUNCHER="$REPO_DIR/awake"
+BINARY="$REPO_DIR/CoAwake"
 
 [ -x "$LAUNCHER" ] || { echo "error: launcher not found or not executable: $LAUNCHER" >&2; exit 1; }
 
-# Best-effort pre-build so login start doesn't depend on swiftc being on launchd's PATH. Through the
-# launcher's `build`, which owns the build command — and which renames the new binary into place
+# Ensure the compiled Mach-O binary is current before registering. Through the launcher's `build`,
+# which owns the build + ad-hoc codesign (`com.binle.coawake`) and renames the new binary into place
 # rather than writing over it, so a reinstall while an instance is running can't corrupt the process
-# that is paging out of it.
-if command -v swiftc >/dev/null 2>&1; then
-  echo "Pre-building binary…"
-  "$LAUNCHER" build \
-    || echo "warn: pre-build failed; login start will fall back to on-demand compile" >&2
-fi
+# paging out of it.
+echo "Pre-building binary…"
+"$LAUNCHER" build
+[ -x "$BINARY" ] || { echo "error: compiled binary not found or not executable: $BINARY" >&2; exit 1; }
 
-# ProgramArguments: launcher, `start --foreground` so launchd supervises the real process
-# (the launcher's default detach-and-exit would look like the job finished), then passthrough args.
+# ProgramArguments: launchd supervises the compiled Mach-O binary `CoAwake` directly (it always runs
+# attached, and carries an ad-hoc code signature `com.binle.coawake` so macOS Background Task
+# Management and EDR scanners verify it as a signed native binary rather than an unsigned shell script).
+# CO_AWAKE_LAUNCHER / CO_AWAKE_LAUNCH_MODE in EnvironmentVariables preserve the in-app self-updater's
+# ability to invoke `awake build`.
 xml_escape(){ local s="$1"; s="${s//&/&amp;}"; s="${s//</&lt;}"; s="${s//>/&gt;}"; printf '%s' "$s"; }
 prog=""
-for a in "$LAUNCHER" "start" "--foreground" "$@"; do
-  prog+="    <string>$(xml_escape "$a")</string>"$'\n'
+passthrough=()
+for a in "$@"; do
+  [ "$a" = "--foreground" ] && continue
+  passthrough+=("$a")
+done
+for a in "$BINARY" "start" "${passthrough[@]+"${passthrough[@]}"}"; do
+  prog+="        <string>$(xml_escape "$a")</string>"$'\n'
 done
 
-mkdir -p "$HOME/Library/LaunchAgents"
-cat > "$PLIST" <<PLIST_EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
+mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
+plist_content="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
 <dict>
     <key>Label</key>
     <string>${LABEL}</string>
@@ -71,17 +78,27 @@ ${prog}    </array>
     <dict>
         <key>PATH</key>
         <string>/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin</string>
+        <key>CO_AWAKE_BIN_NAME</key>
+        <string>awake</string>
+        <key>CO_AWAKE_LAUNCHER</key>
+        <string>$(xml_escape "$LAUNCHER")</string>
+        <key>CO_AWAKE_LAUNCH_MODE</key>
+        <string>attached</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>${LOG}</string>
+    <string>$(xml_escape "$LOG")</string>
     <key>StandardErrorPath</key>
-    <string>${LOG}</string>
+    <string>$(xml_escape "$LOG")</string>
 </dict>
-</plist>
-PLIST_EOF
+</plist>"
 # NOTE: no KeepAlive on purpose — choosing Exit from the menu quits it until next login.
+# Write via bash builtin printf only when the content actually changed, avoiding unnecessary plist
+# modification events and external /bin/cat spawns into ~/Library/LaunchAgents.
+if [ ! -f "$PLIST" ] || [ "$(cat "$PLIST" 2>/dev/null || true)" != "$plist_content" ]; then
+  printf '%s\n' "$plist_content" > "$PLIST"
+fi
 
 # Idempotent (re)load: bootout first so a re-install doesn't hit "service already loaded".
 # bootout is asynchronous, so poll until both the old service registration and any supervised
@@ -103,6 +120,6 @@ launchctl bootstrap "$DOMAIN" "$PLIST"
 
 echo "Installed login item: $LABEL"
 echo "  plist:   $PLIST"
-echo "  command: $LAUNCHER start --foreground $*"
+echo "  command: $BINARY start ${passthrough[*]+"${passthrough[*]}"}"
 echo "  log:     $LOG"
 echo "Uninstall: $SCRIPT_DIR/uninstall-login-item.sh"
