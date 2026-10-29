@@ -12,7 +12,7 @@ battery — read without privileges and without touching the menu bar.
 
 Version is single-sourced in [`VERSION`](VERSION); release history in [`CHANGELOG.md`](CHANGELOG.md).
 
-**Cover page:** [co-awake.pages.dev](https://co-awake.pages.dev)
+**Cover page:** [awake.binlecode.com](https://awake.binlecode.com)
 
 | You want to… | Read |
 |---|---|

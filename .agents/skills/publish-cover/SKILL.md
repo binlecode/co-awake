@@ -10,7 +10,7 @@ subset** of the repo — just the cover page and the GIFs it references, served 
 root. Deployed to **Cloudflare Pages** as `<project>.pages.dev` via `wrangler` **direct upload** (we
 hand Cloudflare a built folder — no repo access, no build step of its own).
 
-Live URL: `https://co-awake.pages.dev`. Scripts live in `scripts/` next to this file.
+Live URL: `https://awake.binlecode.com` (custom domain on `co-awake.pages.dev`). Scripts live in `scripts/` next to this file.
 
 ## What I can and can't do
 
@@ -94,7 +94,7 @@ project name to avoid collisions.
 ## 3. Verify (live)
 
 ```bash
-URL=https://co-awake.pages.dev
+URL=https://awake.binlecode.com
 curl -sSI "$URL" | head -1                                   # expect: HTTP/2 200
 # Badge, retried: the edge can serve the PREVIOUS deploy for a few seconds after a successful
 # upload, so one fetch showing the old version is not a failed deploy (see below).
