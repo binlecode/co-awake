@@ -38,6 +38,26 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.4] - 2026-10-29
+
+### Fixed
+
+- **Eliminated steady-state `.trace` redraws and closed-menu `NSMenuItem` churn on the 2 s tick.**
+  In `.trace` mode, `updateDisplaySlot()` previously assigned a new `NSImage` on every 2 s tick even
+  when all 12 quantized bar heights, appearance, tint, and countdown text were unchanged, triggering
+  AppKit layout passes, `CA::Transaction` backing-store allocations (+13 page faults/tick), and
+  `NSStatusItem` replicant snapshots (~0.5% CPU). `TraceRenderSignature` now skips `button.image`
+  replacement when the rendered state is unchanged, `sampleSystemLoad()` gates
+  `refreshKeepAwakeSelectionState()` on `isMenuOpen`, `statusItemAccessibilityLabel` deduplicates
+  VoiceOver label updates (preserving R22 battery diagnostics in `.gif`/`.trace`), and unused
+  `getloadavg` polling (`cachedLoadAverages`) is removed — dropping steady-state `.trace` load to
+  0.0% CPU (<1 ms per 2 s tick).
+- **Login-item LaunchAgent supervises the ad-hoc signed `CoAwake` Mach-O binary directly.**
+  `scripts/install-login-item.sh` and `awake build` now stamp `CoAwake` with identifier
+  `com.binle.coawake` (`codesign -fs - -i com.binle.coawake`), supervise `CoAwake start` directly
+  without a redundant post-`bootstrap` `kickstart -k` race, and log detached/login-item output to
+  `~/Library/Logs/co-awake.log`.
+
 ## [3.1.3] - 2026-10-27
 
 ### Fixed

@@ -65,7 +65,7 @@ whether to enable start-at-login (pass `--login` to enable it without prompting;
 `curl | bash` skips the prompt).
 
 - **Overrides:** `CO_AWAKE_HOME` (install dir), `BIN_DIR` (launcher symlink dir).
-- **Update:** re-run the installer (it runs `git pull` in place), or use the in-app updater below.
+- **Update:** run `curl -fsSL https://raw.githubusercontent.com/binlecode/co-awake/main/install.sh | bash -s -- --login` (pulls `origin/main`, rebuilds, and reloads the login item), or use the in-app updater ([below](#updates)).
 - **Uninstall:** `~/.local/share/co-awake/uninstall.sh` — tears down start-at-login, stops any
   running instance, removes the launcher symlink and the install dir (`--yes` skips the confirmation).
 
@@ -212,12 +212,24 @@ the baked-in args.
 
 ## Updates
 
-On launch the app compares your checkout's highest release tag (`git ls-remote --tags origin 'v*'`)
-with its own version — **the only network access it makes**, once per launch, failing silently. A newer
-tag turns the root `Settings` row into `Settings · Update available` and its update row into `Update to vX.Y.Z…`. Applying it is always a deliberate click and confirm:
-`git pull --ff-only` (never `--force`), compile while the app keeps running, then **Restart**. Your
-Keep Awake window, display mode, battery threshold and tint carry over. Disable the check with
-`--no-update-check` or `CO_AWAKE_UPDATE_CHECK=0`.
+- **In-app:** On launch the app compares your checkout's highest release tag (`git ls-remote --tags origin 'v*'`)
+  with its own version — **the only network access it makes**, once per launch, failing silently. A newer
+  tag turns the root `Settings` row into `Settings · Update available` and its update row into `Update to vX.Y.Z…`. Applying it is always a deliberate click and confirm:
+  `git pull --ff-only` (never `--force`), compile while the app keeps running, then **Restart**. Your
+  Keep Awake window, display mode, battery threshold and tint carry over. Disable the check with
+  `--no-update-check` or `CO_AWAKE_UPDATE_CHECK=0`.
+- **From the shell (GitHub SOP):**
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/binlecode/co-awake/main/install.sh | bash -s -- --login
+  ```
+  This fast-forwards `~/.local/share/co-awake` from `origin/main`, atomically compiles and signs the new
+  `CoAwake` binary, and reloads the `com.binle.coawake` LaunchAgent cleanly.
+- **Release-first discipline (maintainers & agents):** Never copy files from a working checkout into
+  `~/.local/share/co-awake` or compile out-of-tree into the install directory. Always cut and push the
+  release to GitHub first (`VERSION` + `CHANGELOG.md` + `tests/qa.sh` + `git tag vX.Y.Z` +
+  `git push origin main vX.Y.Z`, per [ARCHITECTURE § 13](docs/ARCHITECTURE.md#13-release-hygiene--delivery-discipline)),
+  then upgrade `~/.local/share/co-awake` from GitHub via the command above or the in-app updater so the
+  installed checkout stays a clean fast-forward clone of `origin/main`.
 
 ## Resource cost
 

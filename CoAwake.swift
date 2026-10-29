@@ -496,10 +496,6 @@ private enum Tuning {
     // Upper bound on the GIF-derived slot aspect, so a freakishly wide GIF can't blow out the bar.
     static let maxIconAspect: CGFloat = 6.0
 
-    static let loadAverageSampleCount = 3
-    static let loadAverage1mIndex = 0
-    static let loadAverage5mIndex = 1
-    static let loadAverage15mIndex = 2
     static let minAlphaPixelComponents = 4
     static let alphaVisibleThreshold: UInt8 = 3
 
@@ -4721,7 +4717,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         ofSize: NSFont.menuBarFont(ofSize: 0).pointSize,
         weight: .regular
     )
-    private var cachedLoadAverages: (Double, Double, Double)?
     private var screenObserver: NSObjectProtocol?
     private var powerStateObserver: NSObjectProtocol?
     private var thermalStateObserver: NSObjectProtocol?
@@ -4767,6 +4762,20 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var machineAwakeItem: NSMenuItem!
     // Last tint state pushed to the bar/label, so the 2s tick only re-drives them on a real change.
     private var lastAwakeTintSignature = ""
+    // Last rendered trace-chart state, so the 2s tick skips replacing `button.image` (and the resulting
+    // AppKit layout + CALayer backing-store + replicant snapshot cascade) when all 12 quantized bar
+    // heights, appearance, tint, and countdown are unchanged.
+    private struct TraceRenderSignature: Equatable {
+        let quantizedBars: [Int]
+        let isEmpty: Bool
+        let isDark: Bool
+        let isBattery: Bool
+        let tintTone: String
+        let activeColorRaw: Int
+        let countdown: String?
+        let totalWidthHalfPt: Int
+    }
+    private var lastTraceRenderSignature: TraceRenderSignature?
     // "Other Assertions" — the read-only section listing other processes' sleep assertions. Rows are
     // pre-created (cap + the overflow line + the `none` line) and driven by isHidden/title, the
     // otherSourceRowItems pattern: refresh must never add or remove NSMenuItems.
@@ -5844,8 +5853,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     @objc
     private func sampleSystemLoad() {
-        cachedLoadAverages = readSystemLoadAverages()
-
         // Real elapsed wall-clock since the last tick (nil on the first), for counter-delta sources.
         // The nominal 2s interval isn't trustworthy — a tick can slip under load/sleep — so rates
         // divide by this, not the interval.
@@ -5899,9 +5906,12 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         logAnimationIfRequested()
 
         refreshMenuMetrics()
-        // Keep Awake's countdown is the one selection-state row that changes on its own, so it refreshes
-        // on the tick as well as on menuWillOpen — an open menu counts down live.
-        refreshKeepAwakeSelectionState()
+        // Keep Awake's countdown and foreign-assertion rows change on their own, so they refresh on the
+        // tick while the menu is open — when closed, `menuWillOpen` refreshes them on demand, avoiding
+        // background NSMenuItem title / CoreText font-descriptor churn every 2s.
+        if isMenuOpen {
+            refreshKeepAwakeSelectionState()
+        }
         syncKeepAwakeCountdownTicker()
     }
 
@@ -6066,27 +6076,19 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             refreshSourceListState()
         }
 
-        let source = activeLoadSource
-        if telemetry.hasSample(source) {
-            let state = stateText(for: source)
-            let spokenState = source == .memory ? "pressure \(state)" : state
-            statusItem.button?.setAccessibilityLabel("co-awake — \(spokenReading(for: source)), \(spokenState)")
-        } else {
-            statusItem.button?.setAccessibilityLabel("co-awake — measuring \(spokenName(for: source))")
-        }
-
         if isAutoSpeed {
             // Name the active self-throttle cause(s) rather than a generic "throttled" tag, so the
             // line distinguishes true thermal throttling from Low Power Mode / memory pressure.
             let reasons = loadReductionReasons
             if reasons.isEmpty {
-                throttleStatusItem.isHidden = true
+                if !throttleStatusItem.isHidden { throttleStatusItem.isHidden = true }
             } else {
-                throttleStatusItem.title = "↳ " + MenuTitle.slowingAnimation + " — " + reasons.joined(separator: ", ")
-                throttleStatusItem.isHidden = false
+                let nextTitle = "↳ " + MenuTitle.slowingAnimation + " — " + reasons.joined(separator: ", ")
+                if throttleStatusItem.title != nextTitle { throttleStatusItem.title = nextTitle }
+                if throttleStatusItem.isHidden { throttleStatusItem.isHidden = false }
             }
         } else {
-            throttleStatusItem.isHidden = true
+            if !throttleStatusItem.isHidden { throttleStatusItem.isHidden = true }
         }
 
         // Refresh the single status item on the same cadence (2s tick + menuWillOpen).
@@ -6799,6 +6801,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         switch effectiveDisplayMode {
         case .gif:
+            lastTraceRenderSignature = nil
             if button.image != nil { button.image = nil }
             if !button.title.isEmpty { button.title = "" }
             if button.attributedTitle.length > 0 { button.attributedTitle = NSAttributedString() }
@@ -6836,8 +6839,10 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 if countdownLabel.superview != nil { countdownLabel.removeFromSuperview() }
             }
             renderCurrentFrame()
-            let cdSpoken = countdown.map { ", \($0) remaining" } ?? ""
-            button.setAccessibilityLabel("co-awake — \(spokenReading(for: activeLoadSource))\(cdSpoken)")
+            let a11y = statusItemAccessibilityLabel(countdown: countdown)
+            if button.accessibilityLabel() != a11y {
+                button.setAccessibilityLabel(a11y)
+            }
 
         case .trace:
             if animationView?.isHidden != true { animationView?.isHidden = true }
@@ -6858,12 +6863,23 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             if abs(statusItem.length - totalW) > 0.01 {
                 statusItem.length = totalW
             }
-            button.image = makeTraceChartImage(countdown: countdown, appearance: button.effectiveAppearance)
+            let sig = currentTraceRenderSignature(
+                countdown: countdown,
+                totalWidth: totalW,
+                appearance: button.effectiveAppearance
+            )
+            if button.image == nil || sig != lastTraceRenderSignature {
+                lastTraceRenderSignature = sig
+                button.image = makeTraceChartImage(countdown: countdown, appearance: button.effectiveAppearance)
+            }
             if button.imagePosition != .imageOnly { button.imagePosition = .imageOnly }
-            let cdSpoken = countdown.map { ", \($0) remaining" } ?? ""
-            button.setAccessibilityLabel("co-awake — \(spokenReading(for: activeLoadSource)) trace chart\(cdSpoken)")
+            let a11y = statusItemAccessibilityLabel(modeSuffix: " trace chart", countdown: countdown)
+            if button.accessibilityLabel() != a11y {
+                button.setAccessibilityLabel(a11y)
+            }
 
         case .value:
+            lastTraceRenderSignature = nil
             if animationView?.isHidden != true { animationView?.isHidden = true }
             if animationView?.superview != nil { animationView?.removeFromSuperview() }
             if !countdownLabel.isHidden { countdownLabel.isHidden = true }
@@ -6904,8 +6920,51 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             if button.attributedTitle != nextAttr {
                 button.attributedTitle = nextAttr
             }
-            button.setAccessibilityLabel(displayText.replacingOccurrences(of: "\u{2007}", with: ""))
+            let a11y = displayText.replacingOccurrences(of: "\u{2007}", with: "")
+            if button.accessibilityLabel() != a11y {
+                button.setAccessibilityLabel(a11y)
+            }
         }
+    }
+
+    private func statusItemAccessibilityLabel(modeSuffix: String = "", countdown: String?) -> String {
+        let source = activeLoadSource
+        let cdSpoken = countdown.map { ", \($0) remaining" } ?? ""
+        guard telemetry.hasSample(source) else {
+            return "co-awake — measuring \(spokenName(for: source))\(modeSuffix)\(cdSpoken)"
+        }
+        let state = stateText(for: source)
+        let spokenState = source == .memory ? "pressure \(state)" : state
+        return "co-awake — \(spokenReading(for: source)), \(spokenState)\(modeSuffix)\(cdSpoken)"
+    }
+
+    private func currentTraceRenderSignature(
+        countdown: String?,
+        totalWidth: CGFloat,
+        appearance: NSAppearance?
+    ) -> TraceRenderSignature {
+        let barCount = Tuning.labelChartBarCount
+        let barWidth = Tuning.labelChartBarWidth
+        let chartHeight = Tuning.labelChartHeight
+        let trailing = loadHistory.suffix(min(loadHistory.count, barCount))
+        let quantizedBars = trailing.map { value -> Int in
+            let clamped = min(max(value, 0), 1)
+            let h = max(barWidth, CGFloat(clamped) * chartHeight)
+            return Int((h * 2.0).rounded())
+        }
+        let hold = awakeHold
+        let paused = keepAwakeArmedNotHolding
+        let isDark = appearance?.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return TraceRenderSignature(
+            quantizedBars: quantizedBars,
+            isEmpty: loadHistory.isEmpty,
+            isDark: isDark,
+            isBattery: activeLoadSource == .battery,
+            tintTone: keepAwakeTint(for: hold, paused: paused)?.rawValue ?? "none",
+            activeColorRaw: activeKeepAwakeColor.rawValue,
+            countdown: countdown,
+            totalWidthHalfPt: Int((totalWidth * 2.0).rounded())
+        )
     }
 
     private func measuredTextWidth(_ text: String) -> CGFloat {
@@ -6981,7 +7040,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                     let clamped = min(max(value, 0), 1)
                     let slot = barCount - count + offset
                     let x = plot.minX + CGFloat(slot) * slotWidth
-                    let h = max(barWidth, CGFloat(clamped) * plot.height)
+                    let rawH = max(barWidth, CGFloat(clamped) * plot.height)
+                    let h = CGFloat((rawH * 2.0).rounded()) / 2.0
                     let barRect = NSRect(x: x, y: plot.minY, width: barWidth, height: h)
                     self.traceChartColor(for: clamped, isBattery: isBattery, dark: isDark).setFill()
                     NSBezierPath(roundedRect: barRect, xRadius: barRadius, yRadius: barRadius).fill()
@@ -7816,19 +7876,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     // MARK: - Speed & power conditions
-
-    private func readSystemLoadAverages() -> (Double, Double, Double)? {
-        var samples = [Double](repeating: 0, count: Tuning.loadAverageSampleCount)
-        let count = samples.withUnsafeMutableBufferPointer { buffer in
-            getloadavg(buffer.baseAddress, Int32(buffer.count))
-        }
-        guard count >= Int32(Tuning.loadAverageSampleCount) else { return nil }
-        return (
-            samples[Tuning.loadAverage1mIndex],
-            samples[Tuning.loadAverage5mIndex],
-            samples[Tuning.loadAverage15mIndex]
-        )
-    }
 
     private func cpuStateText(for usage: Double) -> String {
         if usage < Tuning.cpuStateLowThreshold {

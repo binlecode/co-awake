@@ -24,6 +24,7 @@ Shared guidance for Claude Code and coding agents working in this repository.
 7. 🔴 **状态持久化单写者模型**：`state.json` 只能由 `persistState()` 统一驱动，禁止在局部 observer 或高频采样循环中自行写盘。
 8. 🔴 **动词 CLI 与单一输出契约**：首参只放动词（`start`·`status`·`snapshot`·`presets`·`build`）；输出只有一份 Schema，字段自带物理单位，缺读数一律缺键（不补 0 或 null）；严禁新增兼容别名或双前缀回退。
 9. 🔴 **脚本兼容性**：启动器与周边脚本必须严格保证 `/bin/bash` 3.2 与 macOS 原生 `/bin/zsh` 兼容性。
+10. 🔴 **本地安装升级 SOP（Release-First via GitHub）**：严禁从开发工作区直接拷贝文件或越过 Git 覆盖 `~/.local/share/co-awake`；升级本机常驻安装必须先按 `docs/ARCHITECTURE.md` §13 完成版本发布并推送至 GitHub（`main` + `vX.Y.Z` tag），再通过标准 GitHub 安装升级流（`curl -fsSL https://raw.githubusercontent.com/binlecode/co-awake/main/install.sh | bash -s -- --login`）从 `origin` 拉取更新。
 
 ---
 
