@@ -84,15 +84,22 @@ PLIST_EOF
 # NOTE: no KeepAlive on purpose — choosing Exit from the menu quits it until next login.
 
 # Idempotent (re)load: bootout first so a re-install doesn't hit "service already loaded".
-# bootout is asynchronous, so poll until the old service actually disappears before
-# re-bootstrapping — otherwise bootstrap races the teardown and fails with 5 ("Input/output error").
+# bootout is asynchronous, so poll until both the old service registration and any supervised
+# process from it disappear before re-bootstrapping — otherwise bootstrap races the teardown
+# (either failing with 5 "Input/output error", or starting RunAtLoad while the old PID is still
+# visible to the launcher's singleton pgrep guard). RunAtLoad=true starts the job on bootstrap;
+# a separate `kickstart -k` right after bootstrap would kill the instance bootstrap just started
+# and race its own teardown.
+old_pid="$(launchctl print "$DOMAIN/$LABEL" 2>/dev/null | awk '/^[[:space:]]*pid = / { print $3; exit }' || true)"
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 for _ in $(seq 1 30); do
-  launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 || break
+  if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1 \
+     && { [ -z "$old_pid" ] || ! kill -0 "$old_pid" 2>/dev/null; }; then
+    break
+  fi
   sleep 0.1
 done
 launchctl bootstrap "$DOMAIN" "$PLIST"
-launchctl kickstart -k "$DOMAIN/$LABEL" 2>/dev/null || true   # start now, no logout needed
 
 echo "Installed login item: $LABEL"
 echo "  plist:   $PLIST"
