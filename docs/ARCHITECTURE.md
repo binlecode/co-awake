@@ -77,7 +77,7 @@ There is **one CLI grammar for two kinds of caller, three entry paths, and one s
                                                   | TelemetryCore                      |
                                                   |                                    |
                                                   | ten unprivileged hardware readers  |
-                                                  | probes, scalers, physical units    |
+                                                  | probes, log scale, physical units  |
                                                   |                                    |
                                                   | not its business: AppKit, speed    |
                                                   | mapping, Keep Awake, state.json    |
@@ -230,16 +230,16 @@ The application includes ten unprivileged telemetry monitors, owned by `Telemetr
 +------------------------+---------------------------+-----------------------+------------------------------------------+
 | Monitor Class          | Primary Kernel/Mach API   | Native Reading Unit   | Normalization / Scaling Model            |
 +------------------------+---------------------------+-----------------------+------------------------------------------+
-| CPULoadMonitor         | host_processor_info()     | Core tick deltas      | EMA (alpha=0.20); IODeviceTree P/E split |
-| MemoryLoadMonitor      | host_statistics64()       | Pages, swapins/outs   | max(RAM%, ScaledSwap); idle floor 0.55   |
+| CPULoadMonitor         | host_processor_info()     | Core tick deltas      | Direct percentage (0.0..1.0); P/E split  |
+| MemoryLoadMonitor      | host_statistics64()       | Pages, swapins/outs   | Direct RAM used fraction (0.0..1.0)      |
 | GPULoadMonitor         | IORegistry IOAccelerator  | Device utilization %  | Direct percentage (0.0..1.0); Rend/Tiler |
-| SMCClient (Fan)        | AppleSMCKeysEndpoint      | F{n}Ac / F{n}Mx RPM   | RPM / Max RPM (fan mean percentage)      |
-| SMCClient (Temp)       | AppleSMCKeysEndpoint      | Tpx* / Tp*a max °C    | Fixed 30°C .. 100°C linear clamp         |
-| NetworkLoadMonitor     | getifaddrs() (AF_LINK)    | Interface byte deltas | ThroughputScaler (Bytes/Sec, floor 1MB/s)|
-| DiskLoadMonitor        | IOBlockStorageDriver      | Drive byte deltas     | ThroughputScaler (Bytes/Sec, floor 4MB/s)|
-| BatteryLoadMonitor     | IOKit Power Sources       | Discharge mA, %       | ThroughputScaler (Discharge mA, floor 0.5A)
-| ANELoadMonitor         | IOReport (Energy Model)   | Millijoules delta     | ThroughputScaler (Watts, floor 1.0 W)    |
-| BandwidthLoadMonitor   | IOReport (PMP / DCS BW)   | AMCC residency hist   | ThroughputScaler (GB/s, floor 150 GB/s)  |
+| SMCClient (Fan)        | AppleSMCKeysEndpoint      | F{n}Ac / F{n}Mx RPM   | Fastest fan RPM / Max RPM (0.0..1.0)     |
+| SMCClient (Temp)       | AppleSMCKeysEndpoint      | Tpx* / Tp*a max °C    | Direct 0°C .. 100°C linear clamp         |
+| NetworkLoadMonitor     | getifaddrs() (AF_LINK)    | Interface byte deltas | Stateless log10 scale (0.1..1000 MiB/s)  |
+| DiskLoadMonitor        | IOBlockStorageDriver      | Drive byte deltas     | Stateless log10 scale (1..10000 MiB/s)   |
+| BatteryLoadMonitor     | IOKit Power Sources       | Charge %, Discharge A | Direct charge fraction (0.0..1.0)        |
+| ANELoadMonitor         | IOReport (Energy Model)   | Millijoules delta     | Stateless log10 scale (0.1..10 W)        |
+| BandwidthLoadMonitor   | IOReport (PMP / DCS BW)   | AMCC residency hist   | Stateless log10 scale (10..1000 GB/s)    |
 +------------------------+---------------------------+-----------------------+------------------------------------------+
 ```
 
@@ -250,14 +250,11 @@ neither can drive the animation — they answer *which part* of a chip the drivi
 ### 4.1 CPU Load Monitoring (`CPULoadMonitor`)
 
 - Mach call: `host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, ...)`.
-- Computes tick deltas across all system cores:
+- Computes tick deltas across all system cores directly over the sampling window (no artificial EMA lag):
   $$\Delta \text{total} = \Delta \text{user} + \Delta \text{system} + \Delta \text{nice} + \Delta \text{idle}$$
-  $$\text{rawFraction} = \frac{\Delta \text{user} + \Delta \text{system} + \Delta \text{nice}}{\Delta \text{total}}$$
-- Smoothed via EMA with smoothing factor $\alpha = 0.20$ (`Tuning.cpuSmoothingAlpha`):
-  $$\text{smoothedUsage}_t = \alpha \times \text{rawFraction} + (1 - \alpha) \times \text{smoothedUsage}_{t-1}$$
+  $$\text{currentUtilization} = \frac{\Delta \text{user} + \Delta \text{system} + \Delta \text{nice}}{\Delta \text{total}}$$
 
-**The P/E cluster split.** The same tick deltas, summed per cluster instead of per machine, and
-smoothed with the same $\alpha$ so a jumpy split cannot sit beside a settled total. It answers a
+**The P/E cluster split.** The same tick deltas, summed per cluster instead of per machine. It answers a
 different question from the figure above it: four saturated E-cores and four saturated P-cores both
 read 35% on an M4 Max, and they are different machine states with different thermal futures.
 
@@ -280,28 +277,15 @@ default source's every tick.
 A machine that publishes no cluster map (Intel, and anything else that answers none) has no split:
 the `Diagnostics ▸` CPU row is hidden and the snapshot keys are absent. The whole-machine figure is unaffected.
 
-**The split is a smoothed series, not this tick's point read.** When a tick's per-cluster delta fails
-(`busy(...)` returns nil), `smooth(nil, into:)` returns the previous smoothed value unchanged, and
-`hasSample` means "a smoothed value has been formed", not "this tick succeeded". Neither the menu nor
-`snapshot` can therefore tell a split computed this tick from one carried over; both read the same
-fields, so they agree with each other (§ 4.7).
-
-| Module / Boundary | Owns | Not its business |
-|---|---|---|
-| `CPULoadMonitor` | The total and the P/E split, their smoothing, and the one validity flag both consumers read | Per-tick freshness of the split. Proving "this tick" needs a sample generation counter, or clearing the value on a failed delta. Either one is a reader semantics change that also changes when the split keys are absent from `snapshot` (`cpu_p_pct` / `cpu_e_pct`). A display layer must not invent its own freshness test beside the reader's. Reopen if a field case shows cluster deltas failing for minutes while a stale split is still displayed, or if a `snapshot` consumer needs per-sample freshness. The change then belongs inside this reader. |
-
-### 4.2 Composite Memory & Swap Monitoring (`MemoryLoadMonitor`)
+### 4.2 Memory & Swap Monitoring (`MemoryLoadMonitor`)
 
 - **RAM Used Fraction:** Derived from `host_statistics64(HOST_VM_INFO64)` — measured from what is
   *reclaimable*, not from a sum of "used" buckets, which is why it reads higher than Activity Monitor
   (a deliberate approximation, documented at the call site):
   $$\text{availablePages} = \text{free\_count} + \text{purgeable\_count} + \text{external\_page\_count}$$
-  $$\text{rawFraction} = 1 - \frac{\text{availablePages} \times \text{pageSize}}{\text{totalPhysicalRAM}}$$
-  $$\text{adjustedRAMFraction} = \frac{\max(0, \text{rawFraction} - \text{memoryIdleFloor})}{1.0 - \text{memoryIdleFloor}}$$
-  (`Tuning.memoryIdleFloor` = `0.55`, compensating for OS cache retention).
-- **Swap Paging Rate:** Measures delta of `swapins` + `swapouts` over elapsed wall time $\Delta t$, normalized through `ThroughputScaler` (`swapFloorBytesPerSec` = 1 MiB/s).
-- **Composite Driver:**
-  $$\text{currentMemoryLoad} = \max(\text{adjustedRAMFraction}, \text{scaler.scale}(\text{swapRateBytesPerSec}))$$
+  $$\text{currentUsedFraction} = 1 - \frac{\text{availablePages} \times \text{pageSize}}{\text{totalPhysicalRAM}}$$
+  `currentUsedFraction` directly drives both the animation speed and the trace chart (1:1 with the displayed percentage).
+- **Swap Capacity & Paging Rate:** Measures `vm.swapusage` capacity and delta of `swapins` + `swapouts` over elapsed wall time $\Delta t$, surfaced in `Diagnostics ▸` and `snapshot` (`swap_mibs`).
 
 ### 4.3 SMC Sensor Architecture (`SMCClient`)
 
@@ -332,18 +316,18 @@ fields, so they agree with each other (§ 4.7).
 ```
 
 - **Binary Search Key Table Discovery:** Instead of sequential table scans (~600ms) or guesswork, `SMCClient.floatKeys(withPrefix:)` uses binary search across the ascending SMC key table (~20ms), discovering dynamic fan (`F{n}Ac`) and temperature (`Tp**`) keys across Intel and Apple Silicon chips.
-- **Die Temperature Mapping:** Reads hottest cluster/core sensors (`Tpx*` cluster maxima on M4+, falling back to `Tp*a` per-core sensors on M1–M3 and excluding synthetic `*z`/`*b` offset keys). Bounded strictly between $30^\circ\text{C}$ and $100^\circ\text{C}$ (`Tuning.temperatureFloorCelsius` to `temperatureCeilingCelsius`):
-  $$\text{loadFraction} = \text{clamp}\left(\frac{T_{\text{max}} - 30.0}{100.0 - 30.0}, 0.0, 1.0\right)$$
+- **Die Temperature Mapping:** Reads hottest cluster/core sensors (`Tpx*` cluster maxima on M4+, falling back to `Tp*a` per-core sensors on M1–M3 and excluding synthetic `*z`/`*b` offset keys). Mapped linearly across $0^\circ\text{C} \dots 100^\circ\text{C}$ (`Tuning.temperatureCeilingCelsius`):
+  $$\text{loadFraction} = \text{clamp}\left(\frac{T_{\text{max}}}{100.0}, 0.0, 1.0\right)$$
 
-### 4.4 The Adaptive `ThroughputScaler` (btop Hysteresis)
+### 4.4 Stateless Logarithmic Scaling (`Tuning.logScale`)
 
-For unbounded rates (network bytes/sec, disk bytes/sec, swap bytes/sec, battery discharge mA), `ThroughputScaler` provides jitter-free normalization:
+For wide-dynamic-range rate signals without a percentage ceiling (network bytes/sec, disk bytes/sec, ANE watts, DRAM bus GB/s), `Tuning.logScale` maps $[0, \text{ceiling}]$ monotonically and statelessly to $[0, 1]$:
 
-1. **Sliding Window Ceiling:** Computes rolling average over the last $N=5$ samples (`Tuning.scalerWindow`).
-2. **Asymmetric Headroom:**
-   - Headroom Up: $1.3\times$ (`Tuning.scalerHeadroomUp`)
-   - Headroom Down: $3.0\times$ (`Tuning.scalerHeadroomDown`)
-3. **Hysteresis Counters:** Rescaling requires $5$ consecutive out-of-band samples (`Tuning.scalerRescaleCount`) tracked in `overCount` and `underCount` registers, preventing single bursts from oscillating the display.
+$$\text{load}(x) = \text{clamp}\left(\frac{\log_{10}(1 + x / \text{unit})}{\log_{10}(1 + \text{ceiling} / \text{unit})},\ 0.0,\ 1.0\right)$$
+
+- $x = 0$ maps continuously to $0.0$ without discontinuity;
+- Each order-of-magnitude step above `unit` adds an equal visual band across the 12-bar trace chart and speed range;
+- Zero state, zero history drift: the same physical rate always maps to the exact same bar height and animation speed.
 
 ### 4.5 The `IOReport` Binding & Neural Engine Power (`IOReportClient`, `ANELoadMonitor`)
 
@@ -414,8 +398,8 @@ time-per-bandwidth-bucket, § 4.8).
    +------------------------------+                +------------------------------+
    | Simple Channel (Accumulated):|                | State Channel (Residency):   |
    | P = delta_mJ / delta_sec => W|                | Weighted mean across bucket  |
-   | Scaler(floor: aneFloorWatts) |                |  midpoints => GB/s rate      |
-   |                              |                | Scaler(floor: bandwidthFloor)|
+   | Tuning.logScale(0.1..9.9 W)  |                |  midpoints => GB/s rate      |
+   |                              |                | Tuning.logScale(10..1000GB/s)|
    +------------------------------+                +------------------------------+
 ```
 
@@ -432,12 +416,7 @@ time-per-bandwidth-bucket, § 4.8).
 - **No sleep-gap special case is needed.** `elapsed` comes from `systemUptime`, which does not advance
   while the machine is asleep, and neither does the energy counter.
 
-**Normalization.** Watts are unbounded and vary by chip tier, so the reading goes through the same
-`ThroughputScaler` as the other rate sources rather than a hardcoded per-chip cap. `Tuning.aneFloorWatts`
-= `1.0` W is the minimum ceiling, and unlike the rate floors it is not there to reject idle chatter — a
-power-gated NPU reads a hard, exact `0` — but to keep a *trivial* inference from reading as a busy one.
-Measured on an M4 Max: `0` W idle, 0.24–0.32 W under Vision accurate text recognition, and 1.4–3.7 W
-under image-featureprint, saliency, and body-pose inference.
+**Normalization.** Watts are unbounded and vary by chip tier, so the reading maps through `Tuning.logScale` (`unit = 0.1 W`, `ceiling = 9.9 W`). A power-gated NPU reads a hard, exact `0` (`0%` load); measured on an M4 Max: `0` W idle, 0.24–0.32 W under Vision accurate text recognition, and 1.4–3.7 W under image-featureprint, saliency, and body-pose inference.
 
 **Accepted cost.** This is the most expensive reader in the suite. `IOReportCreateSamples` costs ~2.9 ms
 per call and is effectively the entire per-tick cost (the delta and the single-row scan measure 0.001 ms
@@ -452,8 +431,8 @@ Battery telemetry operates across two distinct time domains to honor the unprivi
 
 1. **High-Frequency Dynamic Telemetry (`BatteryLoadMonitor`)**:
    - Sampled periodically during active telemetry.
-   - Reads instantaneous discharge current (`kIOPSCurrentKey`) and battery charge percentage via unprivileged `IOPSCopyPowerSourcesInfo()`.
-   - While on battery, discharge current (mA) normalizes through `ThroughputScaler` (`Tuning.batteryFloorMilliamps` = 500 mA). While plugged into AC, discharge draw is 0, driving the animation at idle speed.
+   - Reads battery charge fraction (`0.0..1.0`) and instantaneous discharge current (`kIOPSCurrentKey`) via unprivileged `IOPSCopyPowerSourcesInfo()`.
+   - Charge fraction directly drives the readout, trace chart, and animation speed uniformly; discharge current is surfaced in `Diagnostics ▸` and `snapshot` (`battery_a`).
 2. **Static Health & Capacity Diagnostics (`BatteryDiagnosticsReader`)**:
    - Battery health and cycle counts are slow-moving hardware metrics that degrade over months, not seconds.
    - **Strict Zero-Polling Invariant**: Health diagnostics are **never** queried in the background 2s telemetry loop or vsync game loop.
@@ -473,7 +452,7 @@ The unprivileged readers used to run inside a status item, so the only consumer 
 
 | Module / Boundary | Owns | Not its business — canonical owner |
 |---|---|---|
-| `TelemetryCore` | Every reader, its availability probe and its scaler, plus the per-source dispatch (`sampleSource(_:elapsed:)`, `isSourceAvailable(_:)`, `hasSample(_:)`, `currentLoad(_:)`) and one `snapshot()` returning physical units | Speed mapping, menu text, labels, Keep Awake, `state.json` — all `CoAwakeApp` |
+| `TelemetryCore` | Every reader, its availability probe and its normalization, plus the per-source dispatch (`sampleSource(_:elapsed:)`, `isSourceAvailable(_:)`, `hasSample(_:)`, `currentLoad(_:)`) and one `snapshot()` returning physical units | Speed mapping, menu text, labels, Keep Awake, `state.json` — all `CoAwakeApp` |
 | `CoAwakeApp` | Everything on screen and every intent that persists; asks the core for readings | How a reading is taken — `TelemetryCore` |
 | `co-awake` (launcher) | Singleton guard, `compile_if_stale`, detach — for **`start` only** | Telemetry; and on the `snapshot` path, compiling anything |
 | Field projection / filtering | Caller piping to `jq` or JSON parsers | Not `snapshot` (no `--query`; rates require discrete delta window) |
@@ -481,7 +460,7 @@ The unprivileged readers used to run inside a status item, so the only consumer 
 | Tool schema export | Calling agent harness native registry | Not `snapshot` (no `--tool-spec`; avoids duplicate schema drift without consumers) |
 | Unattended sleep hold for an agent's job | The agent, via `caffeinate -i -w <pid>` bound to its own job | Not this app. Keep Awake is a person's menu control with a 5% floor and a persisted intent; a headless job needs a hold whose lifetime is the job's PID, which the system tool already gives with no resident process. Reopen if an agent needs something `caffeinate` cannot express |
 
-The core never imports a display concept. It returns MB/s, °C, W, RPM, %, A — never the 0..1 driver value. Normalization to 0..1 is a speed-mapping question, which is why the scalers (§ 4.4) stay *inside* the readers, where they are how a rate reader produces its own number, and why nothing in a snapshot reads one. The core also never touches `state.json`: a snapshot describes the machine, not this app's intent, and a second writer would break the single-writer model (§ 8.2).
+The core never imports a display concept. It returns MB/s, °C, W, RPM, %, A — never the 0..1 driver value. Normalization to 0..1 (§ 4.4) stays inside `sampleSource`, where a rate reader produces its own 0..1 fraction, and nothing in a snapshot reads it. The core also never touches `state.json`: a snapshot describes the machine, not this app's intent, and a second writer would break the single-writer model (§ 8.2).
 
 **Interface.** One flag, one schema, one sampling window:
 
@@ -500,7 +479,7 @@ The rate readings (network, disk, swap, battery current, ANE) are counter deltas
 
 **Honest telemetry contract.** `snapshot` is the machine-vitals probe an agent reaches for before or during heavy work, and the keys an agent gates on — `memory_pressure`, `power_source`, `thermal`, `temp_c` — are exactly the ones where a fallback does damage. A fallback to `"normal"`, `"ac"`, `"nominal"` or a scale floor converts "could not ask" into a green light, and the caller cannot tell the two apart. So none exists: a refused `sysctl` (sandboxes return `EPERM`), an IOPS call with no answer, a UPS supply (neither word in the vocabulary), a thermal level this build cannot name, or every die cluster power-gated each leave the key out. The caller owns the decision for an absent key; absence means unknown, not fine. The GUI keeps its own fallbacks — a menu annotation that reads "nominal" for an unknown level misleads no automated decision — which is why `KernelThermalPressure` has a display read and a snapshot read.
 
-`power_source` is determined from explicit IOPS power-source descriptions (`IOPSCopyPowerSourcesList`): it appears only when an explicit description confirms AC or battery. Empty description lists (such as a desktop Mac lacking smart battery descriptions), failed IOPS queries, UPS supplies, or conflicting states leave the key absent. The all-parked temperature case is the subtle one: the reader reports the animation scale's floor so the menu can say "≤ 30 °C", which is a bound, not a measurement, and has no key here (the guard `!temperatureMonitor.perSensor.isEmpty` ensures only actively measured sensors emit `temp_c`).
+`power_source` is determined from explicit IOPS power-source descriptions (`IOPSCopyPowerSourcesList`): it appears only when an explicit description confirms AC or battery. Empty description lists (such as a desktop Mac lacking smart battery descriptions), failed IOPS queries, UPS supplies, or conflicting states leave the key absent. The all-parked temperature case is the subtle one: when every cluster is parked, `perSensor` is empty so the menu states `"parked"`, and `snapshot` omits `temp_c` (`!temperatureMonitor.perSensor.isEmpty` ensures only actively measured sensors emit `temp_c`).
 
 **Schema.** `v` is the contract version and the only field always present; every other key appears when its reader answered. Names carry their unit — `_mibs` is MiB/s (the menu writes "MB/s" as display shorthand: same number, not a second fact). Adding a field is not a version bump; removing one or changing what it means is, and consumers read by key and ignore what they do not know.
 
@@ -575,15 +554,7 @@ time it spent in each bandwidth bucket. Channels are the `AMCC…RD+WR` rows of 
 - **A silent histogram is no reading, not a zero.** Zero total residency returns `nil`, so the source
   reports unavailable rather than a confident 0.0 GB/s.
 
-**Normalization.** Unbounded, and the ceiling differs by an order of magnitude across chip tiers, so
-it goes through `ThroughputScaler` rather than a per-SoC table nobody could keep current.
-`Tuning.bandwidthFloorGBps` = `150.0` is the minimum ceiling. The bus is the one rate source with **no
-idle state to speak of** — display scanout and OS housekeeping keep it moving on a machine doing
-nothing — so unlike the network and disk floors this one is not there to reject a trickle, but to put
-a resting bus low in the range. Measured on an M4 Max: **16 GB/s** idle, **46–78** under ordinary
-desktop work, **335** under eight threads streaming buffers far larger than cache (the histogram's
-residency reaching its 480 GB/s bucket). A floor at 150 leaves a resting bus near a tenth of the
-range and still lets real work rescale the ceiling past it.
+**Normalization.** Unbounded, and the ceiling differs by an order of magnitude across chip tiers, so it maps statelessly through `Tuning.logScale` (`unit = 10.0 GB/s`, `ceiling = 999.9 GB/s`). Measured on an M4 Max: **16 GB/s** idle, **46–78** under ordinary desktop work, **335** under eight threads streaming buffers far larger than cache (the histogram's residency reaching its 480 GB/s bucket).
 
 **What is measured and not asserted.** The midpoint weighting is verified by the idle-vs-loaded pair
 above, not by `tests/qa.sh`: its failure signature is an idle bus pinned near a bucket edge, which
@@ -661,15 +632,14 @@ The engine reduces its own footprint under thermal or battery strain.
 - When `occlusionState` does not contain `.visible` (e.g. hidden behind a MacBook notch, displaced by menu bar crowding, situated on an inactive macOS Space, or display asleep), the `CADisplayLink` / `Timer` is stopped completely.
 - Frame rendering and rasterization drop to **0.0% CPU**.
 
-### 5.2 Power, Thermal & Memory Throttling
+### 5.2 Power & Thermal Throttling
 
 - **Triggers:**
   - `NSProcessInfo.isLowPowerModeEnabled` (`.NSProcessInfoPowerStateDidChange`)
   - `ProcessInfo.thermalState` is `.serious` or `.critical` (`ProcessInfo.thermalStateDidChangeNotification`)
-  - Memory Pressure is `.warning` or `.critical` (`DispatchSource.makeMemoryPressureSource`)
-- **Action:** Speed multiplier is capped at `Tuning.constrainedSpeedCeilingFraction` ($0.5\times$ range midpoint). Immediate recalculation bypasses standard 2s hysteresis.
+- **Action:** Speed multiplier is capped at `Tuning.constrainedSpeedCeilingFraction` ($0.5\times$ range midpoint).
 
-**Kernel throttling is a separate fact from this self-throttling, and the menu states them separately.** `KernelThermalPressure` maps `ProcessInfo.thermalState` to a level and annotates the root *temperature* row with `· Thermal Throttling` at `.serious` / `.critical`, after the primary value (`Temperature: 72 °C · Thermal Throttling`, and after `≤30 °C` too). The sensor spread lives in `Diagnostics ▸` and is not repeated. Three constraints shape it:
+**Kernel throttling is a separate fact from this self-throttling, and the menu states them separately.** `KernelThermalPressure` maps `ProcessInfo.thermalState` to a level and annotates the root *temperature* row with `· Thermal Throttling` at `.serious` / `.critical`, after the primary value (`Temperature: 72 °C · Thermal Throttling`, and after `parked` too). The sensor spread lives in `Diagnostics ▸` and is not repeated. Three constraints shape it:
 
 - **Level only, never a percentage.** Apple Silicon manages clocks on-die via CLPC and publishes no unprivileged frequency cap: `IOPMCopyCPUPowerStatus` answers `kIOReturnNotFound` (probed on M4 Max; `pmset -g therm` agrees). Intel's `CPU_Speed_Limit` is excluded from the build: no Intel hardware is available to this project, so both the IOKit read and the row it would annotate would ship unverified — and § 4.3's claim that `Tp**` discovery spans Intel is itself untested here (`floatKey` accepts only `flt `-typed keys, so an Intel Mac may answer with a different type rather than a different name). Deriving a percentage from a discrete level would be a fabricated reading.
 - **No new telemetry source, no new timer, no new sample.** It reads a property the app already observes, inline in `refreshMenuMetrics()` — so it is evaluated on that method's existing cadence (the 2s tick and `menuWillOpen`) and adds no cache, no timer of its own, and no IOKit call.
@@ -794,7 +764,7 @@ plain click and the slot carries `handleStatusItemClick(_:)` the rest of the tim
 | **Dual-Slot Menu Bar Item (`labelItemLeft`/`Right`)** | DECLINED | WindowServer owns status-item screen placement and offers no relative group-pinning API. On saturated/notched menu bars, macOS scatters adjacent items, interleaving foreign menu items between icon and label. Furthermore, an idle length-0 item still consumes ~16 pt of system margin. | Zero scatter; zero lateral jitter; single-item minimal status bar footprint. | macOS provides an official, non-deprecated API to atomically pin and group multiple status items together. |
 | **Custom Text Labels (`--label <text>`)** | DECLINED | Arbitrary user string labels introduce non-telemetry visual noise into a dedicated load-monitoring utility, requiring modal prompt dialogs, character length clamps, and complex string sanitization. | Zero non-telemetry noise; single-purpose load visualization. | An explicit multi-instance identification use case that cannot be addressed via preset choice or standard OS notifications. |
 | **Left / Right Slot Position Selection** | DECLINED | Position selection was an artifact of the dual-slot model. With a single unified status item, there is no neighbor to order against. | Interface minimalism; zero redundant configuration knobs. | Multi-slot architecture is reintroduced under a verified grouping API. |
-| **A separate "which source drives it" submenu beside read-only readout rows** | DECLINED — the readout row *is* the selector (§ 6.5) | The same ten-source list shown twice is two entry points for one decision. The accepted cost is a misclick: a click on a different row runs `setLoadSource`, which clears `loadHistory` (sources differ in unit — %, GB/s, RPM, °C, W — so a normalized history cannot be spliced across them), resets the sample baseline, re-derives speed and persists the new source. Clicking back does not restore the cleared trace, and the change can be invisible (fixed `--speed-multiplier`, similar load, frozen display). Bounded because the trace holds `loadHistoryCapacity` (12) samples at 2 s — about 24 s, rebuilt by itself — and a click on the already-selected row is a no-op (`selectLoadSource` and `setLoadSource` both guard `source != activeLoadSource`). | One action, one entry point. | The trace window grows to minutes, or any non-rebuildable accumulator (a long-window mean) is added, so a misclick stops costing "about 24 s". |
+| **A separate "which source drives it" submenu beside read-only readout rows** | DECLINED — the readout row *is* the selector (§ 6.5) | The same ten-source list shown twice is two entry points for one decision. The accepted cost is a misclick: a click on a different row runs `setLoadSource`, which clears `loadHistory` (sources differ in unit — %, GB/s, RPM, °C, W — so a normalized history cannot be spliced across them), resets the sample baseline, re-derives speed and persists the new source. Clicking back does not restore the cleared trace, and the change can be invisible (fixed `--speed-multiplier`, similar load, frozen display). Bounded because the trace holds `labelChartBarCount` (12) samples at 2 s — about 24 s, rebuilt by itself — and a click on the already-selected row is a no-op (`selectLoadSource` and `setLoadSource` both guard `source != activeLoadSource`). | One action, one entry point. | The trace window grows to minutes, or any non-rebuildable accumulator (a long-window mean) is added, so a misclick stops costing "about 24 s". |
 | **Sorting or hiding readout rows by live value** | DECLINED | While the menu is open, `refreshSourceListState()` rewrites titles every `loadSampleInterval` (2 s). A reorder in the same write swaps the `NSMenuItem` under the pointer for a different source; with clickable rows that is a wrong driver selection plus the history clear above. | Click targets do not move while the menu is open. | AppKit offers a native "freeze order while tracking, reorder on next open" mechanism, measured at zero displacement during tracking. |
 | **Keep Awake first row as an `NSSwitch` custom view** | DECLINED | An `NSMenuItem` with a `view` leaves standard target/action dispatch and menu keyboard navigation (arrows + Return), does not close the menu on click, and needs a hand-written AX role — a second interaction model inside one menu. | Standard `NSMenuItem`s only; keyboard and VoiceOver take AppKit's default path. | macOS ships a native, non-custom-view toggle menu item API. |
 | **Hiding `Runner Preset ▸` outside GIF mode** | DECLINED | `selectPreset` switches a non-GIF display back to `.gif`, so choosing a preset shows its effect at once. Hiding it costs two menu round trips (Display Mode → Runner GIF, menu closes, reopen → Runner Preset). | A preset is always discoverable and takes effect in one click. | A preset must stop implying the display mode (e.g. presets start styling the trace). |
@@ -1073,9 +1043,7 @@ the animation is shown by the selection dot, not by text (§ 6.5).
 
 Two root rows carry more than a number, and both exist for **honesty**:
 
-- **`≤30 °C`** — with every cluster parked no sensor answers, and the reader parks `currentCelsius` at
-  `Tuning.temperatureFloorCelsius` so the animation has a value. That figure was not measured, so it is
-  shown as an upper bound. The digits come from `currentCelsius`, not a hard-coded 30.
+- **`parked`** — with every cluster parked no sensor answers, so the row states `parked` rather than fabricating a temperature, and the animation runs at `0` load.
 - **`· Thermal Throttling`** — the kernel is throttling the machine (§ 5.2). That is what the row is
   watched for at that moment, so it stays on the root row.
 
@@ -1296,10 +1264,8 @@ Built-in preset identities are decoupled from Swift code into `gifs/presets.json
       "menuTitle": "Horse (White)",
       "file": "running-horse-white.gif",
       "speed": {
-        "label": "horse",
         "min": 0.45,
-        "max": 2.30,
-        "responseExponent": 1.0
+        "max": 2.30
       }
     }
   ]
@@ -1378,21 +1344,17 @@ Comprehensive reference of values defined in `Tuning`:
 |---|---|---|---|
 | `loadSampleInterval` | `2.0` | Seconds | Telemetry sampling and dashboard refresh period (not configurable; keeps 2s tempo agility, ~0.015% CPU duty cycle — § 6.4) |
 | `snapshotWindow` | `0.2` | Seconds | Delta window between the two samples `snapshot` takes; the snapshot's whole latency budget (§ 4.7) |
-| `cpuSmoothingAlpha` | `0.2` | Fraction | Exponential moving average alpha for CPU load smoothing |
-| `speedUpdateHysteresis` | `0.08` | Fraction | Minimum load delta required to adjust animation speed |
-| `constrainedSpeedCeilingFraction` | `0.5` | Fraction | Animation speed cap under thermal/power/memory pressure |
+| `constrainedSpeedCeilingFraction` | `0.5` | Fraction | Animation speed cap under thermal/Low Power Mode pressure |
 | `maxFrameAdvanceDelta` | `1.0` | Seconds | Threshold to trigger game loop clock resync after sleep/pause |
-| `scalerWindow` | `5` | Samples | Window size for adaptive throughput rolling average |
-| `scalerRescaleCount` | `5` | Samples | Hysteresis consecutive sample count before rate rescaling |
-| `scalerHeadroomUp` | `1.3` | Multiplier | Ceiling headroom when expanding rate scale |
-| `scalerHeadroomDown` | `3.0` | Multiplier | Floor headroom when contracting rate scale |
-| `temperatureFloorCelsius` | `30.0` | °C | Lower anchor for die temperature speed mapping |
-| `temperatureCeilingCelsius` | `100.0` | °C | Upper anchor for die temperature speed mapping |
-| `memoryIdleFloor` | `0.55` | Fraction | Baseline RAM fraction subtracted before speed scaling |
-| `aneFloorWatts` | `1.0` | Watts | Minimum Neural Engine speed-scale ceiling (keeps trivial inference off full speed) |
-| `bandwidthFloorGBps` | `150.0` | GB/s | Minimum DRAM bus speed-scale ceiling (keeps a resting bus low in the range — § 4.8) |
-| `labelWattCeiling` | `9.9` | Watts | Reserved label width for the `ANE` readout |
-| `labelBandwidthCeiling` | `999.9` | GB/s | Reserved label width for the `BW` readout |
+| `temperatureCeilingCelsius` | `100.0` | °C | Upper anchor for die temperature speed mapping (0…100 °C) |
+| `networkScaleUnitBytesPerSec` | `0.1` | MiB/s | Log-scale unit anchor for network throughput |
+| `diskScaleUnitBytesPerSec` | `1.0` | MiB/s | Log-scale unit anchor for disk throughput |
+| `aneScaleUnitWatts` | `0.1` | Watts | Log-scale unit anchor for Neural Engine power |
+| `bandwidthScaleUnitGBps` | `10.0` | GB/s | Log-scale unit anchor for DRAM bus bandwidth |
+| `labelRateCeiling` | `999.9` | MiB/s | Log-scale ceiling and reserved label width for network throughput |
+| `labelDiskCeiling` | `9999.0` | MiB/s | Log-scale ceiling and reserved label width for disk throughput |
+| `labelWattCeiling` | `9.9` | Watts | Log-scale ceiling and reserved label width for the `ANE` readout |
+| `labelBandwidthCeiling` | `999.9` | GB/s | Log-scale ceiling and reserved label width for the `BW` readout |
 | `batteryLowThresholdDefault` | `0.20` | Fraction | Default battery release point for Keep Awake (20%) |
 | `batteryCriticalThreshold` | `0.05` | Fraction | Hard safety release floor for Keep Awake (5%) |
 | `keepAwakeBarForeignAlpha` | `0.45` | Alpha | Opacity of track line when machine is held awake externally |
@@ -1402,9 +1364,8 @@ Comprehensive reference of values defined in `Tuning`:
 | `labelSlotPadding` | `4.0` | Points | Slack padding added to reserved status item label widths |
 | `labelChartWidth` | `45.0` | Points | Fixed plot width for the menu bar trace chart (sparkline) |
 | `labelChartHeight` | `14.0` | Points | Plot height for the menu bar trace chart |
-| `labelChartBarCount` | `12` | Count | Number of visible bar slots in status bar trace chart |
+| `labelChartBarCount` | `12` | Count | Number of visible bar slots (and sample history capacity) in status bar trace chart |
 | `labelChartBarWidth` | `2.6` | Points | Width of individual rounded pill bars in status bar trace chart |
-| `loadHistoryCapacity` | `12` | Samples | Trace window (~24 s at the 2 s tick); cleared on a source change, so it bounds what a readout-row misclick costs (§ 6.4) |
 | `keepAwakeDurations` | `1800 / 3600 / 7200 / 14400 / 28800` | Seconds | Timed rows in `Keep Awake For ▸`, listed before `Until turned off` (§ 7.6) |
 | `keepAwakeMaxHours` · `keepAwakeMaxMinutes` | `24` · `59` | h · min | Upper bound of `Custom…` and of `--keep-awake` |
 | `batteryThresholdRows` | `0.10 / 0.15 / 0.20 / 0.30` | Fraction | Rows of `Battery Release Threshold ▸` (§ 7.2) |

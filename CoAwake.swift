@@ -390,14 +390,12 @@ private enum Tuning {
     // spins through thousands of catch-up frames on resume.
     static let maxFrameAdvanceDelta: TimeInterval = 1.0
 
-    static let cpuSmoothingAlpha: Double = 0.2
     static let loadSampleInterval: TimeInterval = 2.0
     // Delta window between the two samples the `snapshot` takes. The rate readers (network,
     // disk, swap, battery current, ANE) are counter deltas and have no value at a single instant, so
     // a snapshot has to span one. Long enough for a counter to move on an idle machine, short enough
     // that a script can call this between other work — it is what the snapshot's whole latency is.
     static let snapshotWindow: TimeInterval = 0.2
-    static let speedUpdateHysteresis: Double = 0.08
     // When the system is under power/thermal pressure (Low Power Mode, or serious/
     // critical thermal state), THIS APP caps ITS OWN animation speed to this fraction
     // of the preset's min..max range. This reduces only the app's own CPU use (fewer
@@ -407,8 +405,6 @@ private enum Tuning {
     static let constrainedSpeedCeilingFraction: Double = 0.5
     static let cpuStateLowThreshold: Double = 0.30
     static let cpuStateMediumThreshold: Double = 0.70
-    // How many 0…1 load samples the trace chart retains (one per loadSampleInterval tick).
-    static let loadHistoryCapacity: Int = 12
     // Per-preset speed ranges now live in gifs/presets.json (see PresetManifest), not here — the
     // manifest is the single source of truth for preset profiles. Width is not a preset constant;
     // it's derived at runtime from each GIF's real aspect ratio (see currentGifAspect/slotLength).
@@ -417,57 +413,28 @@ private enum Tuning {
     static let initialSpeedMultiplier: Double = 1.0
     static let percentScale: Double = 100.0
 
-    // Adaptive throughput scaling (borrowed from btop's Net::collect auto-scale). Unbounded rate
-    // signals (network bytes/sec, disk bytes/sec, memory swap bytes/sec) have no natural 0..1 range,
-    // so each `ThroughputScaler` tracks an evolving ceiling and normalizes speed as
-    // min(speed / ceiling, 1). The ceiling = max(avg(last `scalerWindow` speeds) * headroom, floor),
-    // recomputed only after `scalerRescaleCount` consecutive out-of-band samples (hysteresis: a lone
-    // spike or dip can't move the scale). Headroom is asymmetric — tight when scaling up, generous
-    // when scaling down so it doesn't immediately re-trigger. See btop src/osx/btop_collect.cpp.
-    static let scalerWindow: Int = 5
-    static let scalerRescaleCount: Int = 5
-    static let scalerHeadroomUp: Double = 1.3
-    static let scalerHeadroomDown: Double = 3.0
-    // Byte-unit divisors, shared by the ceiling floors below and the MB/GB menu readouts.
+    // Byte-unit divisors, shared by the rate scales and the MB/GB menu readouts.
     static let bytesPerMiB: Double = 1_048_576
     static let bytesPerGiB: Double = 1_073_741_824
     static let milliampsPerAmp: Double = 1000
-    static let msPerSecond: Double = 1000
-    // Per-source ceiling floors. btop uses 10 KiB/s; we raise them so idle background chatter
-    // (keepalive packets, housekeeping I/O, lazy swap) doesn't peg a menu-bar toy at full speed.
-    static let networkFloorBytesPerSec: Double = 1 * bytesPerMiB
-    static let diskFloorBytesPerSec: Double = 4 * bytesPerMiB
-    static let swapFloorBytesPerSec: Double = 1 * bytesPerMiB
-    // Battery discharge-current ceiling floor (milliamps). Not a byte rate, but the same adaptive
-    // ThroughputScaler normalizes it: idle laptop draw sits a few hundred mA, so this floor keeps a
-    // resting drain from pegging the animation while still letting a real workload's multi-amp draw
-    // rise through the range.
-    static let batteryFloorMilliamps: Double = 500
-    // Neural Engine power ceiling floor (watts). Same adaptive ThroughputScaler, fed watts. Unlike
-    // the rate sources there is no idle chatter to reject — a power-gated NPU reads a hard 0 — so this
-    // floor exists for the other reason: to keep a *trivial* inference from reading as a busy one.
-    // Measured on an M4 Max: 0.24–0.32 W for Vision text recognition (light, and genuinely not much
-    // work), 1.4–3.7 W for featureprint / saliency / body-pose inference. A floor at 1 W therefore
-    // puts light work low in the range and lets real inference rescale the ceiling up past it.
-    static let aneFloorWatts: Double = 1.0
-    // DRAM bus ceiling floor (GB/s). Same adaptive ThroughputScaler, fed a residency-weighted rate.
-    // The bus is the one rate source with no idle state to speak of: display scanout and OS
-    // housekeeping keep it moving even on a machine doing nothing, so the floor's job is to put that
-    // resting traffic low in the range rather than to reject a trickle. Measured on an M4 Max
-    // 2026-09-20: an idle bus reads 16 GB/s, ordinary desktop work 46-78, and eight threads streaming
-    // buffers far larger than cache 335. A floor at 150 therefore leaves a resting bus near a tenth of
-    // the range and still lets real work rescale the ceiling up past it.
-    static let bandwidthFloorGBps: Double = 150.0
+    // Stateless logarithmic scale units for unbounded rate signals (network, disk, ANE, DRAM bus).
+    // Paired with the label ceilings below (`labelRateCeiling`, `labelDiskCeiling`, `labelWattCeiling`,
+    // `labelBandwidthCeiling`), `logScale` maps [0, ceiling] monotonically to [0, 1] via
+    // log10(1 + value/unit) / log10(1 + ceiling/unit): 0 maps to 0, each decade above `unit` adds an
+    // equal visual band, and a given physical rate always produces the exact same bar height and speed.
+    static let networkScaleUnitBytesPerSec: Double = 0.1 * bytesPerMiB
+    static let diskScaleUnitBytesPerSec: Double = 1.0 * bytesPerMiB
+    static let aneScaleUnitWatts: Double = 0.1
+    static let bandwidthScaleUnitGBps: Double = 10.0
 
-    // Die temperature is a THIRD normalization category. It is bounded, like a percentage, but it is
-    // not already a 0…1 fraction, so it maps through a fixed floor/ceiling rather than through
-    // ThroughputScaler (which is only ever for unbounded rates). Deliberately absolute rather than
-    // adaptive: ~100 °C is where an Apple Silicon die throttles and 30 °C is a genuinely cold machine,
-    // so a given animation speed means the same temperature on every Mac and on every day. The cost is
-    // that a Mac which cools well never reaches the top of its speed range — measured on an M-series
-    // laptop, idle 40 °C and a sustained all-core load 78 °C, i.e. only the 0.14…0.69 band. Accepted:
-    // an honest scale beats a full one.
-    static let temperatureFloorCelsius: Double = 30
+    static func logScale(_ value: Double, unit: Double, ceiling: Double) -> Double {
+        guard value.isFinite, value > 0, unit > 0, ceiling > 0 else { return 0 }
+        let normalized = log10(1 + value / unit) / log10(1 + ceiling / unit)
+        return min(max(normalized, 0), 1)
+    }
+
+    // Die temperature ceiling (~100 °C is where an Apple Silicon die throttles), mapping 0…100 °C
+    // directly to 0…1.
     static let temperatureCeilingCelsius: Double = 100
     // Plausibility band for a single sensor. The low end is not a temperature check but a
     // parked-cluster check: a powered-down core cluster answers 0 (or ≈ -4) instead of declining to
@@ -475,15 +442,6 @@ private enum Tuning {
     // rejects a garbage decode. Doubles as the label field's width ceiling (3 digits).
     static let temperatureMinPlausibleCelsius: Double = 1
     static let temperatureMaxPlausibleCelsius: Double = 125
-
-    // Memory used-fraction rests high on a healthy Mac (the OS holds most physical RAM as cache/
-    // wired), so a linear map from raw used-fraction would drive the animation well up its speed
-    // range while the machine is effectively idle. This floor is subtracted from the *used-fraction
-    // term only* (see MemoryLoadMonitor.sampleUsage) and the remainder rescaled to 0…1, so an idle
-    // Mac reads ~0 and the full min..max range maps onto the fraction's real operating band. It is a
-    // deliberate fixed approximation (real idle varies with RAM size/workload); the swap-rate term is
-    // already 0-based via ThroughputScaler and is NOT floored. The menu still shows the raw fraction.
-    static let memoryIdleFloor: Double = 0.55
 
     static let renderVerticalInset: CGFloat = 4
     static let minIconDimension: CGFloat = 12
@@ -534,12 +492,8 @@ private enum Tuning {
 
     // Keep Awake auto-disengage: on battery power at or below this charge fraction we kill
     // `caffeinate` so an unattended Mac doesn't drain to death mid-task. See SleepPreventer.
-    //
-    // SLEEP POLICY ONLY, and deliberately a *default* rather than the value read at runtime: this is
-    // the release point the user can relocate, so the sleep path must read the live setting and never
-    // this constant. It shares the number 0.20 with batteryChartLowThreshold and nothing else —
-    // the two were one constant until R5, which is why the split has its own step: moving the release
-    // point must not recolor the fuel gauge.
+    // Deliberately a default rather than the value read at runtime: the sleep path reads the live
+    // setting (`keepAwakeBatteryThreshold`) and never this constant.
     static let batteryLowThresholdDefault: Double = 0.20
 
     // The floor under the override. Arming Keep Awake *while already* below the release threshold is
@@ -635,17 +589,6 @@ private enum Tuning {
     // never silent.
     static let assertionRowCap: Int = 4
 
-    // Battery trace-chart color bands (charge fraction). The chart is a fuel gauge for the battery
-    // source — low = alert — so ≤20% → red plus this mid band (≤40% → yellow, else green), mirroring
-    // the macOS low-battery convention.
-    //
-    // CHART ONLY, and fixed. It is not the sleep threshold: the red band means "macOS considers this
-    // low", which is a constant of the platform, while the release point is a user preference. Wiring
-    // the chart to the sleep setting would make picking a 10% release repaint the gauge and quietly
-    // redefine what red means.
-    static let batteryChartLowThreshold: Double = 0.20
-    static let batteryChargeMediumThreshold: Double = 0.40
-
     // Keep-awake track line tints — a warm/cool pairing (design POC). Each option carries two tones
     // so the 2pt line holds contrast on both menu-bar appearances: lighter on a dark bar, deeper on a
     // light one (the bestMatch lives in KeepAwakeColor.color(for:)). "Dusty Teal" is the default —
@@ -669,15 +612,6 @@ private enum Tuning {
     // Status bar trace-chart monochrome colors (calibrated for dark/light appearance).
     static let traceChartMonoDark = NSColor(white: 0.90, alpha: 1.0)
     static let traceChartMonoLight = NSColor(white: 0.20, alpha: 1.0)
-
-    // Legacy trace-chart mineral palette: Sage (low/cool), Sand (medium/warm), Terracotta (high/hot).
-    // Desaturated, two-tone (lighter on dark appearance, deeper on light appearance).
-    static let traceChartSageDark = NSColor(srgbRed: 0.54, green: 0.70, blue: 0.58, alpha: 1.0)       // #8AB394
-    static let traceChartSageLight = NSColor(srgbRed: 0.34, green: 0.50, blue: 0.38, alpha: 1.0)      // #578061
-    static let traceChartSandDark = NSColor(srgbRed: 0.83, green: 0.72, blue: 0.52, alpha: 1.0)       // #D4B885
-    static let traceChartSandLight = NSColor(srgbRed: 0.65, green: 0.52, blue: 0.32, alpha: 1.0)      // #A68552
-    static let traceChartTerracottaDark = NSColor(srgbRed: 0.80, green: 0.46, blue: 0.40, alpha: 1.0) // #CC7566
-    static let traceChartTerracottaLight = NSColor(srgbRed: 0.64, green: 0.32, blue: 0.26, alpha: 1.0) // #A35242
 
     // Opacity of the track line (and the label's tint) when the Mac is held awake by SOMEONE ELSE —
     // a bare `caffeinate`, another utility, another user's session. Deliberately not the same solid line
@@ -2091,83 +2025,17 @@ private enum StatusReport {
     }
 }
 
-// Adaptive normalizer for unbounded throughput rates (network/disk/swap bytes-per-sec), ported from
-// btop's Net::collect auto-scale. It maps a raw bytes/sec `speed` to 0…1 against a `ceiling` that
-// tracks the recent workload instead of a fixed reference: full animation speed means "as busy as this
-// machine has recently been," not a hardcoded MB/s. Hysteresis (rescale only after
-// `scalerRescaleCount` consecutive out-of-band samples) keeps a lone spike from blowing the scale, and
-// asymmetric headroom (tighter up, looser down) stops it re-triggering right after a rescale. The
-// ceiling seeds from the first observed speed so a fresh source doesn't peg at 1.0 for a tick.
-// A value type mutated in place by its owning @MainActor monitor.
-private struct ThroughputScaler {
-    private let floor: Double
-    private var ceiling: Double
-    private var seeded = false
-    private var recent: [Double] = []
-    private var overCount = 0
-    private var underCount = 0
-
-    init(floor: Double) {
-        self.floor = floor
-        self.ceiling = floor
-    }
-
-    // Feed one bytes/sec sample, get back its normalized 0…1 load against the current ceiling.
-    mutating func normalize(speed: Double) -> Double {
-        // Seed the ceiling from the first real sample so the first normalized value is ~sane rather
-        // than speed/floor (which would peg at 1.0 whenever the first sample exceeds the floor).
-        if !seeded {
-            seeded = true
-            ceiling = max(speed * Tuning.scalerHeadroomUp, floor)
-        }
-
-        recent.append(speed)
-        if recent.count > Tuning.scalerWindow { recent.removeFirst(recent.count - Tuning.scalerWindow) }
-
-        // btop hysteresis: count consecutive samples that sit above the ceiling or below a tenth of
-        // it; the opposite counter decays so only a sustained trend triggers a rescale.
-        if speed > ceiling {
-            overCount += 1
-            if underCount > 0 { underCount -= 1 }
-        } else if ceiling > floor, speed < ceiling / 10 {
-            underCount += 1
-            if overCount > 0 { overCount -= 1 }
-        }
-
-        if overCount >= Tuning.scalerRescaleCount {
-            ceiling = max(average() * Tuning.scalerHeadroomUp, floor)
-            overCount = 0
-            underCount = 0
-        } else if underCount >= Tuning.scalerRescaleCount {
-            ceiling = max(average() * Tuning.scalerHeadroomDown, floor)
-            overCount = 0
-            underCount = 0
-        }
-
-        guard ceiling > 0 else { return 0 }
-        return min(speed / ceiling, 1)
-    }
-
-    private func average() -> Double {
-        guard !recent.isEmpty else { return 0 }
-        return recent.reduce(0, +) / Double(recent.count)
-    }
-}
-
 @MainActor
 private final class CPULoadMonitor {
     private var lastTotalTicks: UInt64?
     private var lastIdleTicks: UInt64?
-    private var hasSmoothedUsage = false
-    private(set) var smoothedUsage: Double = 0
-    private let smoothingAlpha: Double = Tuning.cpuSmoothingAlpha
-    var hasSample: Bool { hasSmoothedUsage }
+    private(set) var hasSample = false
+    private(set) var currentUtilization: Double = 0
 
     // The same tick deltas, split by cluster: nil on a machine whose CPUs do not publish a cluster
-    // type (Intel, and anything else that answers no map), never a fabricated 0. Smoothed with the
-    // whole's own alpha so a row cannot show a jumpy split beside a settled total.
-    private(set) var smoothedPerformanceUsage: Double?
-    private(set) var smoothedEfficiencyUsage: Double?
+    // type (Intel, and anything else that answers no map), never a fabricated 0.
+    private(set) var performanceUsage: Double?
+    private(set) var efficiencyUsage: Double?
     private var lastClusterTicks: [Int: CPUTicks] = [:]
     // Which logical CPU belongs to which cluster, read once. Empty on hardware that does not say.
     private lazy var clusterIndices: (performance: [Int], efficiency: [Int]) = Self.readClusterIndices()
@@ -2185,15 +2053,10 @@ private final class CPULoadMonitor {
     }
 
     func sampleUsage() -> Double? {
-        guard let usage = currentUsage() else { return nil }
-        if !hasSmoothedUsage {
-            smoothedUsage = usage
-            hasSmoothedUsage = true
-            return smoothedUsage
-        }
-
-        smoothedUsage = (smoothingAlpha * usage) + ((1 - smoothingAlpha) * smoothedUsage)
-        return smoothedUsage
+        guard let usage = readUsage() else { return nil }
+        currentUtilization = usage
+        hasSample = true
+        return usage
     }
 
     // Which half of the chip is busy, from the per-CPU array the whole-machine figure is already
@@ -2231,14 +2094,8 @@ private final class CPULoadMonitor {
             return Double(total - idle) / Double(total)
         }
 
-        smoothedPerformanceUsage = smooth(busy(clusterIndices.performance), into: smoothedPerformanceUsage)
-        smoothedEfficiencyUsage = smooth(busy(clusterIndices.efficiency), into: smoothedEfficiencyUsage)
-    }
-
-    private func smooth(_ sample: Double?, into previous: Double?) -> Double? {
-        guard let sample else { return previous }
-        guard let previous else { return sample }
-        return (smoothingAlpha * sample) + ((1 - smoothingAlpha) * previous)
+        performanceUsage = busy(clusterIndices.performance)
+        efficiencyUsage = busy(clusterIndices.efficiency)
     }
 
     // Read once, at the first sample. Every CPU is an IOPlatformDevice carrying both properties;
@@ -2283,7 +2140,7 @@ private final class CPULoadMonitor {
         return (performance.sorted(), efficiency.sorted())
     }
 
-    private func currentUsage() -> Double? {
+    private func readUsage() -> Double? {
         var cpuCount: natural_t = 0
         var cpuInfo: processor_info_array_t?
         var cpuInfoCount: mach_msg_type_number_t = 0
@@ -2339,13 +2196,11 @@ private final class CPULoadMonitor {
     }
 }
 
-// Reads memory pressure as a composite 0…1 load plus swap capacity. Same unprivileged Mach/sysctl
-// tier as CPULoadMonitor — no private API, no subscription lifecycle. This is a *mixed domain*: the
-// used-fraction is instantaneous (a point read, valid on the first tick, no EMA), while the swap
-// *rate* is counter-delta (swapins+swapouts differenced over real elapsed wall-clock time, so it
-// warms up one tick like the CPU reader). The driver value combines them, `currentMemoryLoad`; the
-// menu still shows the raw used-fraction. No EMA on either — smoothing stays a conscious choice, not
-// a default. "Unavailable" is nil, never a fabricated 0.
+// Reads memory used-fraction (0…1) plus swap capacity and paging rate for Diagnostics/snapshot.
+// Same unprivileged Mach/sysctl tier as CPULoadMonitor — no private API, no subscription lifecycle.
+// Used-fraction is an instantaneous point read (valid on the first tick, no EMA) and directly drives
+// both the animation speed and the trace chart; swap capacity and rate are secondary diagnostics.
+// "Unavailable" is nil, never a fabricated 0.
 @MainActor
 private final class MemoryLoadMonitor {
     private(set) var currentUsedFraction: Double = 0
@@ -2353,23 +2208,13 @@ private final class MemoryLoadMonitor {
     private(set) var swapUsedBytes: UInt64 = 0
     private(set) var swapTotalBytes: UInt64 = 0
     private(set) var hasSwapSample = false
-    // Composite driver value: max(idleFloored(usedFraction), adaptiveScaled(swapRate)). The used-
-    // fraction is floored/rescaled by Tuning.memoryIdleFloor before the max, so it drives ~0 on an
-    // idle Mac; the scaled swap rate (0-based) takes over once paging warms up (one tick) and rises
-    // above it. currentUsedFraction (the menu figure) stays the RAW fraction. See Tuning /
-    // ThroughputScaler.
-    private(set) var currentMemoryLoad: Double = 0
     private(set) var currentSwapRateBytesPerSec: Double = 0
     private(set) var hasSwapRateSample = false
     // Cumulative swapped bytes ((swapins+swapouts) * pageSize) at the previous sample; nil until the
     // first sample or after a cadence break (a source-switch re-sample passes elapsed = nil).
     private var lastSwapEvents: UInt64?
-    // Swap rate is an unbounded bytes/sec signal, so it normalizes through the shared adaptive scaler
-    // (same design as network/disk) rather than a fixed reference — heavy paging is judged relative to
-    // this machine's recent paging.
-    private var swapScaler = ThroughputScaler(floor: Tuning.swapFloorBytesPerSec)
 
-    // One point read: refreshes the composite load (returned) plus, best-effort, swap capacity.
+    // One point read: refreshes the used-fraction (returned) plus, best-effort, swap capacity/rate.
     // `elapsed` is the monotonic seconds since the previous sample (nil on the first tick or a
     // source-switch re-sample) — required to turn the swap counters into a rate. Returns nil only
     // when the used-fraction read itself fails; a failed swap read degrades just the swap
@@ -2380,18 +2225,12 @@ private final class MemoryLoadMonitor {
         hasSample = true
         readSwapUsage()
         updateSwapRate(swapEvents: sample.swapEvents, elapsed: elapsed)
-        let swapLoad = hasSwapRateSample ? swapScaler.normalize(speed: currentSwapRateBytesPerSec) : 0
-        // Reclaim the high resting band of the used-fraction (see Tuning.memoryIdleFloor) so an idle
-        // Mac drives ~0 speed and the full range maps onto the fraction's real operating band. Applied
-        // to the used-fraction term ONLY — swapLoad is already 0-based, so it's max'd in unfloored.
-        let flooredUsed = max(0, (sample.usedFraction - Tuning.memoryIdleFloor) / (1 - Tuning.memoryIdleFloor))
-        currentMemoryLoad = max(flooredUsed, swapLoad)
-        return currentMemoryLoad
+        return currentUsedFraction
     }
 
     // Swap rate is a counter-delta: it needs a prior sample AND real elapsed wall-clock time. When
     // elapsed is nil (first tick / source-switch re-sample) it stores the baseline and reports no
-    // rate, so the composite falls back to the pure used-fraction until it warms up.
+    // rate until the next tick.
     private func updateSwapRate(swapEvents: UInt64, elapsed: Double?) {
         defer { lastSwapEvents = swapEvents }
         guard let elapsed, elapsed > 0, let prev = lastSwapEvents else {
@@ -2459,9 +2298,9 @@ private final class MemoryLoadMonitor {
 
 // GPU utilization via unprivileged IORegistry. IOAccelerator's PerformanceStatistics dictionary
 // exposes "Device Utilization %" (0…100), an instantaneous point read valid on the first tick — no
-// counter-delta, no EMA. Natively 0…1 after /100, so it does NOT use ThroughputScaler (only unbounded
-// rates do). GPU *power/energy* would need the private IOReport dance; utilization does not. `nil`
-// (never a fabricated 0) when no accelerator matches or the key is absent → the source disables.
+// counter-delta, no EMA. Natively 0…1 after /100. GPU *power/energy* would need the private IOReport
+// dance; utilization does not. `nil` (never a fabricated 0) when no accelerator matches or the key is
+// absent → the source disables.
 @MainActor
 private final class GPULoadMonitor {
     private(set) var currentUtilization: Double = 0
@@ -2776,16 +2615,15 @@ private final class SMCClient {
 // keys (F{n}Ac / F{n}Mx, SMC type "flt ", 4-byte little-endian float) via the FNum fan count.
 // Fanless Macs (MacBook Air, most M-series laptops) report FNum == 0 → isAvailable false → the
 // source disables and launch falls back to CPU. Bounded per-machine, so it maps through as a
-// percentage (average across fans of actual/max) — NOT via ThroughputScaler (that's only for
-// unbounded byte/sec rates). actual/max (rather than the min-anchored (actual-min)/(max-min)) is
-// deliberate: idle RPM ≈ min sits well above 0, so the animation keeps some visible motion even when
+// percentage (fastest fan's actual/max). actual/max (rather than the min-anchored (actual-min)/(max-min))
+// is deliberate: idle RPM ≈ min sits well above 0, so the animation keeps some visible motion even when
 // the fans are barely spinning. `nil`, never a fabricated 0, on any read failure.
 @MainActor
 private final class FanLoadMonitor {
     // One fan's current readout: actual RPM and its 0…1 utilization (actual/max).
     struct FanReading { let rpm: Double; let utilization: Double }
-    // Average utilization across fans — drives the animation. Per-fan readings (one menu line
-    // per fan) are in `perFan`.
+    // Fastest fan's utilization — matches the primary RPM figure and drives both trace and animation.
+    // Per-fan readings (Diagnostics split) are in `perFan`.
     private(set) var currentUtilization: Double = 0
     private(set) var perFan: [FanReading] = []
     private(set) var hasSample = false
@@ -2814,14 +2652,11 @@ private final class FanLoadMonitor {
             let clamped = min(max(current / Double(mxVal), 0), 1)
             readings.append(FanReading(rpm: current, utilization: clamped))
         }
-        guard !readings.isEmpty else { hasSample = false; return nil }
+        guard let maxUtilization = readings.map(\.utilization).max() else { hasSample = false; return nil }
         perFan = readings
-        // Average across fans, not the max of any one — a single fan spinning up shouldn't
-        // dominate the animation speed while the rest of the system is quiet.
-        let averageFraction = readings.map(\.utilization).reduce(0, +) / Double(readings.count)
-        currentUtilization = averageFraction
+        currentUtilization = maxUtilization
         hasSample = true
-        return averageFraction
+        return maxUtilization
     }
 
     // Discover this machine's fan keys once; cache the result. The struct-layout guard that gates
@@ -2862,10 +2697,8 @@ private final class FanLoadMonitor {
 //
 // Three decisions an implementer will otherwise undo:
 //
-//   1. MAX, not average — and that deliberately INVERTS the fan precedent one class up. Averaging is
-//      right for fans (one fan spinning up shouldn't dominate while the rest of the machine is quiet)
-//      and wrong here: throttling responds to the hottest die, and averaging a loaded P-core cluster
-//      against an idle one hides the exact event worth visualising.
+//   1. MAX, not average — matching FanLoadMonitor. Throttling responds to the hottest die, and
+//      averaging a loaded P-core cluster against an idle one hides the exact event worth visualising.
 //
 //   2. Max over a CURATED family, never over every temperature key. The five hottest keys on this
 //      machine (Tf06/Tf16/Tf26/Tf36/Tf46, 94–107 °C) are FROZEN CONSTANTS — limits or trip points, not
@@ -2882,11 +2715,9 @@ private final class FanLoadMonitor {
 //      (Tp<N>a raw, Tp<N>x peak-hold, Tp<N>b +9 °C bias, Tp<N>z +17 °C trip-offset); selecting Tp*a
 //      (and excluding *z/*b on the final fallback) avoids the synthetic offsets and reads 7 keys instead of 28.
 //
-// Normalization is a THIRD category, neither a bounded percentage nor an unbounded rate: a fixed
-// floor/ceiling map (Tuning.temperatureFloorCelsius…temperatureCeilingCelsius), NOT ThroughputScaler.
-// A deliberate approximation, in the spirit of MemoryLoadMonitor's composite — see those constants for
-// what it costs. No readable sensor → isAvailable false → disabled menu row and a launch fallback to
-// CPU, exactly like fan on a fanless Mac. Expect that on VMs.
+// Normalization maps 0…temperatureCeilingCelsius (100 °C) linearly to 0…1. No readable sensor →
+// isAvailable false → disabled menu row and a launch fallback to CPU, exactly like fan on a fanless
+// Mac. Expect that on VMs.
 @MainActor
 private final class TemperatureLoadMonitor {
     // One sensor's current readout, kept for the menu's range line the way FanLoadMonitor keeps perFan.
@@ -2924,24 +2755,17 @@ private final class TemperatureLoadMonitor {
         // Nothing answered at all — the SMC went away mid-run. THAT is missing data.
         guard answered > 0 else { hasSample = false; return nil }
         // Every sensor answered and every one of them is parked. That is a reading of **idle**, not an
-        // absence of one, and conflating the two is a shipped bug worth not reintroducing: v1.20.0
-        // returned nil here, which flipped `hasSample` false and made the menu say "warming up..."
-        // after minutes of correct readings — beside a live "Speed Multiplier (auto: Temperature):
-        // 1.74x" row, so the dashboard contradicted itself. Report the floor and an idle load: we
-        // cannot name the die's temperature when every cluster is power-gated, but we can say it is at
-        // or below the point where this scale starts caring. `perSensor` stays empty, which is what
-        // the menu line keys off to say "≤" rather than claim a measurement.
+        // absence of one (`hasSample` stays true, `perSensor` is empty).
         guard let hottest = readings.map(\.celsius).max() else {
             perSensor = []
-            currentCelsius = Tuning.temperatureFloorCelsius
+            currentCelsius = 0
             currentLoad = 0
             hasSample = true
             return 0
         }
         perSensor = readings
         currentCelsius = hottest
-        let span = Tuning.temperatureCeilingCelsius - Tuning.temperatureFloorCelsius
-        currentLoad = min(max((hottest - Tuning.temperatureFloorCelsius) / span, 0), 1)
+        currentLoad = min(max(hottest / Tuning.temperatureCeilingCelsius, 0), 1)
         hasSample = true
         return currentLoad
     }
@@ -3007,21 +2831,17 @@ enum KernelThermalPressure: String {
 
 // Network throughput as a 0…1 load. Cumulative interface byte counters (getifaddrs → if_data) are
 // differenced over real elapsed wall time into inbound/outbound bytes/sec (counter-delta, warms up
-// one tick like CPU); the driving signal normalized by the shared adaptive ThroughputScaler is the
-// average of the two, not the sum, so a single-direction transfer isn't double-counted against a
-// symmetric one. Only AF_LINK entries carry valid if_data, and lo0 is skipped so loopback traffic
-// doesn't inflate the number.
+// one tick like CPU); the driving signal is the average of the two (not the sum, so a single-direction
+// transfer isn't double-counted against a symmetric one), mapped statelessly via Tuning.logScale.
+// Only AF_LINK entries carry valid if_data, and lo0 is skipped so loopback traffic doesn't inflate the number.
 @MainActor
 private final class NetworkLoadMonitor {
     private(set) var hasSample = false
     private(set) var currentInboundBytesPerSec: Double = 0
     private(set) var currentOutboundBytesPerSec: Double = 0
-    // Last normalized 0…1 load (the scaler's output, fed the in/out average), so the speed path can
-    // re-read it without re-sampling — mirrors MemoryLoadMonitor.currentMemoryLoad.
     private(set) var currentLoad: Double = 0
     private var lastInBytes: UInt64?
     private var lastOutBytes: UInt64?
-    private var scaler = ThroughputScaler(floor: Tuning.networkFloorBytesPerSec)
     // getifaddrs is always present on macOS; the source is effectively always available.
     var isAvailable: Bool { true }
 
@@ -3047,7 +2867,11 @@ private final class NetworkLoadMonitor {
         currentInboundBytesPerSec = Double(deltaIn) / elapsed
         currentOutboundBytesPerSec = Double(deltaOut) / elapsed
         hasSample = true
-        currentLoad = scaler.normalize(speed: (currentInboundBytesPerSec + currentOutboundBytesPerSec) / 2)
+        currentLoad = Tuning.logScale(
+            (currentInboundBytesPerSec + currentOutboundBytesPerSec) / 2,
+            unit: Tuning.networkScaleUnitBytesPerSec,
+            ceiling: Tuning.labelRateCeiling * Tuning.bytesPerMiB
+        )
         return currentLoad
     }
 
@@ -3076,8 +2900,7 @@ private final class NetworkLoadMonitor {
 // Disk I/O throughput as a 0…1 load — twin of NetworkLoadMonitor. Every IOBlockStorageDriver's
 // Statistics dict carries cumulative "Bytes (Read)"/"Bytes (Write)"; summed across drivers, differenced
 // over real elapsed time into read/write bytes/sec, and the average of the two (not the sum) is
-// normalized by the shared adaptive ThroughputScaler, so a read-only or write-only burst isn't
-// double-counted against a balanced read+write load.
+// mapped statelessly via Tuning.logScale.
 @MainActor
 private final class DiskLoadMonitor {
     private(set) var hasSample = false
@@ -3086,7 +2909,6 @@ private final class DiskLoadMonitor {
     private(set) var currentLoad: Double = 0
     private var lastReadBytes: UInt64?
     private var lastWriteBytes: UInt64?
-    private var scaler = ThroughputScaler(floor: Tuning.diskFloorBytesPerSec)
     private var availabilityChecked = false
     private var available = false
 
@@ -3118,7 +2940,11 @@ private final class DiskLoadMonitor {
         currentReadBytesPerSec = Double(deltaRead) / elapsed
         currentWriteBytesPerSec = Double(deltaWrite) / elapsed
         hasSample = true
-        currentLoad = scaler.normalize(speed: (currentReadBytesPerSec + currentWriteBytesPerSec) / 2)
+        currentLoad = Tuning.logScale(
+            (currentReadBytesPerSec + currentWriteBytesPerSec) / 2,
+            unit: Tuning.diskScaleUnitBytesPerSec,
+            ceiling: Tuning.labelDiskCeiling * Tuning.bytesPerMiB
+        )
         return currentLoad
     }
 
@@ -3151,25 +2977,18 @@ private final class DiskLoadMonitor {
     }
 }
 
-// Battery as a load source — a *mixed domain* like MemoryLoadMonitor: an instantaneous charge-level
-// point read (valid on the first sample) plus an instantaneous discharge *current* (mA, from IOKit
-// Power Sources' "Current" key). The discharge current — NOT a counter-delta, so no one-tick warm-up
-// — is the driver: while on battery its magnitude normalizes through the shared adaptive
-// ThroughputScaler (each machine's draw ceiling differs), so a fast drain → faster animation and AC
-// power (current 0) → idle. Charge level is a readout, not the driver. Available only when a battery
-// exists (desktop Macs → source disabled + launch fallback to CPU, exactly like Fan on fanless Macs).
-// Reuses the same unprivileged IOPSCopyPowerSourcesInfo plumbing as evaluateBatteryState. `nil` (never a
-// fabricated 0) on read failure.
+// Battery as a load source: an instantaneous charge-level point read (0…1, valid on the first sample)
+// that drives the readout, trace chart, and animation speed uniformly, plus instantaneous discharge
+// current (mA, from IOKit Power Sources' "Current" key) for Diagnostics and snapshot. Available only
+// when a battery exists (desktop Macs → source disabled + launch fallback to CPU, exactly like Fan on
+// fanless Macs). Reuses the same unprivileged IOPSCopyPowerSourcesInfo plumbing as
+// evaluateBatteryState. `nil` (never a fabricated 0) on read failure.
 @MainActor
 private final class BatteryLoadMonitor {
-    private(set) var currentChargeFraction: Double = 0      // 0…1, readout only
+    private(set) var currentChargeFraction: Double = 0      // 0…1
     private(set) var currentDischargeMilliamps: Double = 0  // magnitude, 0 on AC
     private(set) var onBattery = false
-    private(set) var currentLoad: Double = 0                // scaler-normalized 0…1 driver
     private(set) var hasSample = false
-    // Discharge current is an unbounded rate-like signal (mA), so it normalizes through the shared
-    // adaptive scaler like network/disk/swap — just fed an instantaneous magnitude, not a delta.
-    private var scaler = ThroughputScaler(floor: Tuning.batteryFloorMilliamps)
     private var availabilityChecked = false
     private var available = false
 
@@ -3185,11 +3004,9 @@ private final class BatteryLoadMonitor {
         guard let reading = Self.readBattery() else { hasSample = false; return nil }
         currentChargeFraction = reading.charge
         onBattery = reading.onBattery
-        // Discharge current only counts while on battery; on AC the draw is 0 → idle animation.
         currentDischargeMilliamps = reading.onBattery ? abs(reading.currentMilliamps) : 0
         hasSample = true
-        currentLoad = scaler.normalize(speed: currentDischargeMilliamps)
-        return currentLoad
+        return currentChargeFraction
     }
 
     // Only explicit descriptions can establish AC/battery. The providing-source getter hides
@@ -3580,9 +3397,6 @@ private final class ANELoadMonitor {
     private(set) var currentWatts: Double = 0
     private(set) var currentLoad: Double = 0
     private(set) var hasSample = false
-    // Watts are unbounded and vary by chip tier, so the reading normalizes through the same adaptive
-    // scaler as the other rate sources instead of against a hardcoded per-chip cap.
-    private var scaler = ThroughputScaler(floor: Tuning.aneFloorWatts)
     private var probed = false
     private var subscription: IOReportSubscription?
     private var previousSample: CFDictionary?
@@ -3610,7 +3424,11 @@ private final class ANELoadMonitor {
         }
         currentWatts = watts
         hasSample = true
-        currentLoad = scaler.normalize(speed: watts)
+        currentLoad = Tuning.logScale(
+            watts,
+            unit: Tuning.aneScaleUnitWatts,
+            ceiling: Tuning.labelWattCeiling
+        )
         return currentLoad
     }
 
@@ -3665,9 +3483,6 @@ private final class BandwidthLoadMonitor {
     private(set) var currentGigabytesPerSec: Double = 0
     private(set) var currentLoad: Double = 0
     private(set) var hasSample = false
-    // Unbounded, and the ceiling differs by an order of magnitude across chip tiers, so it normalizes
-    // through the adaptive scaler rather than a per-SoC table nobody could keep current.
-    private var scaler = ThroughputScaler(floor: Tuning.bandwidthFloorGBps)
     private var probed = false
     private var subscription: IOReportSubscription?
     private var previousSample: CFDictionary?
@@ -3698,7 +3513,11 @@ private final class BandwidthLoadMonitor {
         }
         currentGigabytesPerSec = gigabytesPerSec
         hasSample = true
-        currentLoad = scaler.normalize(speed: gigabytesPerSec)
+        currentLoad = Tuning.logScale(
+            gigabytesPerSec,
+            unit: Tuning.bandwidthScaleUnitGBps,
+            ceiling: Tuning.labelBandwidthCeiling
+        )
         return currentLoad
     }
 
@@ -3763,8 +3582,6 @@ private final class BandwidthLoadMonitor {
     }
 }
 
-// The color ramp direction for the trace chart. For utilization sources high = alert (green→red as
-// the value rises); for the battery fuel gauge low = alert (the ramp inverts).
 // One whole-machine reading in physical units — %, MiB/s, RPM, A, °C, W — as `snapshot` prints it.
 // Every reading is optional and a reader that did not answer is ABSENT from the JSON, never `null`
 // and never a zero standing in for "no reading": a consumer that sees a key can trust the number.
@@ -3856,9 +3673,7 @@ private struct TelemetrySnapshot {
 // that builds no NSApplication.
 //
 // Physical units come out of `snapshot()`; the 0…1 value `sampleSource` returns is the animation's
-// driver, and normalizing to it is speed mapping's business — which is why the scalers live inside
-// the readers (they are how a rate reader produces its own number) and nothing in the snapshot
-// reads one.
+// driver — nothing in the snapshot reads the normalized 0…1 fraction.
 @MainActor
 private final class TelemetryCore {
     let loadMonitor = CPULoadMonitor()
@@ -3931,18 +3746,16 @@ private final class TelemetryCore {
         }
     }
 
-    // A source's most recent driving fraction, without re-sampling. For memory this is the composite
-    // load (used-fraction ∨ scaled swap rate); for network/disk it's the scaler's last normalized value
-    // — matching what sampleSource returns, not the raw metric shown in the menu.
+    // A source's most recent driving fraction, without re-sampling — matching what sampleSource returns.
     func currentLoad(_ source: LoadSource) -> Double {
         switch source {
-        case .cpu: return loadMonitor.smoothedUsage
-        case .memory: return memoryMonitor.currentMemoryLoad
+        case .cpu: return loadMonitor.currentUtilization
+        case .memory: return memoryMonitor.currentUsedFraction
         case .gpu: return gpuMonitor.currentUtilization
         case .network: return networkMonitor.currentLoad
         case .disk: return diskMonitor.currentLoad
         case .fan: return fanMonitor.currentUtilization
-        case .battery: return batteryMonitor.currentLoad
+        case .battery: return batteryMonitor.currentChargeFraction
         case .temperature: return temperatureMonitor.currentLoad
         case .ane: return aneMonitor.currentLoad
         case .bandwidth: return bandwidthMonitor.currentLoad
@@ -3985,11 +3798,11 @@ private final class TelemetryCore {
             }
         }
         if loadMonitor.hasSample {
-            snap.cpuPercent = loadMonitor.smoothedUsage * Tuning.percentScale
+            snap.cpuPercent = loadMonitor.currentUtilization * Tuning.percentScale
             // Absent, not 0, on a chip that publishes no cluster map — the whole-machine figure is
             // still true there, so the split's absence is the only thing the consumer learns.
-            snap.cpuPerformancePercent = loadMonitor.smoothedPerformanceUsage.map { $0 * Tuning.percentScale }
-            snap.cpuEfficiencyPercent = loadMonitor.smoothedEfficiencyUsage.map { $0 * Tuning.percentScale }
+            snap.cpuPerformancePercent = loadMonitor.performanceUsage.map { $0 * Tuning.percentScale }
+            snap.cpuEfficiencyPercent = loadMonitor.efficiencyUsage.map { $0 * Tuning.percentScale }
             snap.cpuPerformanceCores = loadMonitor.performanceCoreCount
             snap.cpuEfficiencyCores = loadMonitor.efficiencyCoreCount
         }
@@ -4025,8 +3838,7 @@ private final class TelemetryCore {
                 snap.batteryCycles = diag.cycleCount
             }
         }
-        // Only a measured sensor. With every cluster parked the reader reports the animation scale's
-        // floor so the menu can say "≤"; that is a bound, not a die temperature, and has no key here.
+        // Only a measured sensor: when every cluster is parked, perSensor is empty and temp_c is omitted.
         if temperatureMonitor.hasSample, !temperatureMonitor.perSensor.isEmpty {
             snap.temperatureCelsius = temperatureMonitor.currentCelsius
         }
@@ -4481,10 +4293,8 @@ private enum PresetRegistry {
     }
 
     struct Speed: Decodable {
-        let label: String
         let min: Double
         let max: Double
-        let responseExponent: Double
     }
 
     struct Entry {
@@ -4550,10 +4360,8 @@ private enum PresetRegistry {
 @MainActor
 private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private struct SpeedProfile {
-        let label: String
         let min: Double
         let max: Double
-        let responseExponent: Double
     }
 
     private struct PresetDescriptor {
@@ -4567,10 +4375,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // default descriptor to borrow from (i.e. a custom GIF loaded while the manifest failed). In the
     // normal path a custom GIF inherits `defaultDescriptor`'s profile. Literal, self-contained.
     private static let customSpeedProfile = SpeedProfile(
-        label: "custom",
         min: 0.5,
-        max: 2.5,
-        responseExponent: 1.0
+        max: 2.5
     )
 
     // The selection mark for every radio/toggle menu item — a small solid dot in place of the heavy
@@ -4690,9 +4496,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // when false, inactive readers are only sampled while the menu is open (preserving the self-throttle ethos).
     // Configured via --show-all-sources / CO_AWARENESS_SHOW_ALL.
     private var showAllSources: Bool
-    // Last memory-pressure level seen from the dispatch source. Cached because — unlike
-    // thermalState/isLowPowerModeEnabled — there is NO synchronous getter for memory pressure;
-    // it is event-only, so isUnderPowerPressure reads this stored value.
+    // Last memory-pressure level seen from the dispatch source. Cached because there is no
+    // synchronous getter for memory pressure; it is event-only, read by memoryPressureText().
     private var memoryPressureLevel: DispatchSource.MemoryPressureEvent = .normal
     private var memoryPressureSource: DispatchSourceMemoryPressure?
     private var speedMultiplier: Double = Tuning.initialSpeedMultiplier
@@ -4769,7 +4574,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let quantizedBars: [Int]
         let isEmpty: Bool
         let isDark: Bool
-        let isBattery: Bool
         let tintTone: String
         let activeColorRaw: Int
         let countdown: String?
@@ -4857,10 +4661,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 menuTitle: entry.menuTitle,
                 path: entry.path,
                 speedProfile: SpeedProfile(
-                    label: entry.speed.label,
                     min: entry.speed.min,
-                    max: entry.speed.max,
-                    responseExponent: entry.speed.responseExponent
+                    max: entry.speed.max
                 )
             )
         }
@@ -5120,11 +4922,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             }
         }
 
-        // Memory pressure is the third self-throttle input alongside low-power/thermal, but its
-        // lifecycle differs: it is event-only (no synchronous getter), so we cache the level and
-        // MUST include `.normal` in the mask to ever lift the throttle. It also needs an explicit
-        // resume() and is torn down via cancel(), not removeObserver() — a sibling lifecycle to
-        // the notification observers above, hence its own property.
+        // Memory pressure is event-only (no synchronous getter), so we cache the level for the
+        // menu's Memory Pressure state line and include `.normal` in the mask so it clears.
         let pressureSource = DispatchSource.makeMemoryPressureSource(
             eventMask: [.normal, .warning, .critical],
             queue: .main
@@ -5133,7 +4932,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             MainActor.assumeIsolated {
                 guard let self, let level = self.memoryPressureSource?.data else { return }
                 self.memoryPressureLevel = level
-                self.reevaluateSpeedForCurrentConditions()
                 self.refreshMenuMetrics()
             }
         }
@@ -5863,14 +5661,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         // Sample only the active source (active-only, per the self-throttle ethos): the inactive
         // monitors aren't polled, so their menu lines aren't shown while another source drives.
         if let usage = sampleActiveSource(elapsed: elapsed) {
-            recordLoadSample(chartSample(forDriver: usage))
+            recordLoadSample(usage)
             if isAutoSpeed {
-                let candidate = speedMultiplier(forUsage: usage)
-                if abs(candidate - speedMultiplier) >= Tuning.speedUpdateHysteresis {
-                    // The driver reads speedMultiplier live via the accumulator, so the
-                    // new speed takes effect on the next tick — no need to restart it.
-                    speedMultiplier = candidate
-                }
+                speedMultiplier = speedMultiplier(forUsage: usage)
             }
         }
 
@@ -5916,24 +5709,17 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     // Sample whichever reader currently drives the animation, returning its 0…1 fraction (or nil
-    // if unavailable / not warmed up). The single point where the active source is read for speed.
+    // if unavailable / not warmed up). The single point where the active source is read for both
+    // animation speed and the trace chart.
     private func sampleActiveSource(elapsed: Double?) -> Double? {
         telemetry.sampleSource(activeLoadSource, elapsed: elapsed)
-    }
-
-    // The 0…1 value the trace chart should plot for the active source. Identical to the driving
-    // fraction for every source except battery, where the chart is a fuel gauge (charge level) rather
-    // than the discharge-current driver — because on a battery LOW is the alert, not high. Charge is
-    // valid whether plugged in or not, so this works on AC too. The driver still governs speed.
-    private func chartSample(forDriver driver: Double) -> Double {
-        activeLoadSource == .battery ? telemetry.batteryMonitor.currentChargeFraction : driver
     }
 
     // Append a 0…1 chart value to the trace-chart ring buffer, trimming to capacity.
     private func recordLoadSample(_ usage: Double) {
         loadHistory.append(min(max(usage, 0), 1))
-        if loadHistory.count > Tuning.loadHistoryCapacity {
-            loadHistory.removeFirst(loadHistory.count - Tuning.loadHistoryCapacity)
+        if loadHistory.count > Tuning.labelChartBarCount {
+            loadHistory.removeFirst(loadHistory.count - Tuning.labelChartBarCount)
         }
     }
 
@@ -6001,7 +5787,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         refreshSourceListState()
         refreshMenuMetrics()
         refreshPresetSelectionState()
-        refreshWidthInfo()
         refreshBatteryThresholdSelectionState()
         refreshKeepAwakeSelectionState()
         refreshUpdateStatus()
@@ -6078,7 +5863,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         if isAutoSpeed {
             // Name the active self-throttle cause(s) rather than a generic "throttled" tag, so the
-            // line distinguishes true thermal throttling from Low Power Mode / memory pressure.
+            // line distinguishes true thermal throttling from Low Power Mode.
             let reasons = loadReductionReasons
             if reasons.isEmpty {
                 if !throttleStatusItem.isHidden { throttleStatusItem.isHidden = true }
@@ -6104,13 +5889,13 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let value: String
         switch source {
         case .cpu:
-            value = String(format: "%.0f%%", telemetry.loadMonitor.smoothedUsage * Tuning.percentScale)
+            value = String(format: "%.0f%%", telemetry.loadMonitor.currentUtilization * Tuning.percentScale)
         case .memory:
             value = String(format: "%.0f%%", telemetry.memoryMonitor.currentUsedFraction * Tuning.percentScale)
         case .gpu:
             value = String(format: "%.0f%%", telemetry.gpuMonitor.currentUtilization * Tuning.percentScale)
         // Network/disk/fan rows show the human-meaningful readouts (MB/s per direction, RPM), not the
-        // adaptive-normalized 0…1 load that actually drives the animation (activeSourceCurrentUsage).
+        // normalized 0…1 fraction that drives the animation (activeSourceCurrentUsage).
         case .network:
             value = String(
                 format: "↓%.1f ↑%.1f MB/s",
@@ -6124,9 +5909,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 telemetry.diskMonitor.currentWriteBytesPerSec / Tuning.bytesPerMiB
             )
         case .fan:
-            // The fastest fan: one number that answers "is it loud"; the per-fan split is secondary.
-            value = telemetry.fanMonitor.perFan.map(\.rpm).max()
-                .map { String(format: "%.0f RPM", $0) } ?? MenuTitle.placeholderValue
+            // The most utilized fan: matches currentUtilization; the per-fan split is secondary.
+            value = telemetry.fanMonitor.perFan.max(by: { $0.utilization < $1.utilization })
+                .map { String(format: "%.0f RPM", $0.rpm) } ?? MenuTitle.placeholderValue
         case .battery:
             value = String(format: "%.0f%%", telemetry.batteryMonitor.currentChargeFraction * Tuning.percentScale)
         case .temperature:
@@ -6145,8 +5930,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     // The active source's state row: a load band for every reader but two. Memory reports the kernel's
-    // pressure level; battery reports its diagnostic condition and capacity when available (R22),
-    // otherwise the drain band or "On AC".
+    // pressure level; battery reports its diagnostic condition and capacity when available, otherwise
+    // "On Battery" or "On AC".
     private func stateText(for source: LoadSource) -> String {
         switch source {
         case .memory:
@@ -6159,7 +5944,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 }
                 return diag.conditionText
             }
-            return telemetry.batteryMonitor.onBattery ? cpuStateText(for: telemetry.batteryMonitor.currentLoad) : "On AC"
+            return telemetry.batteryMonitor.onBattery ? "On Battery" : "On AC"
         default:
             return cpuStateText(for: telemetry.currentLoad(source))
         }
@@ -6169,7 +5954,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func spokenReading(for source: LoadSource) -> String {
         switch source {
         case .cpu:
-            return String(format: "CPU %.0f%%", telemetry.loadMonitor.smoothedUsage * Tuning.percentScale)
+            return String(format: "CPU %.0f%%", telemetry.loadMonitor.currentUtilization * Tuning.percentScale)
         case .memory:
             return String(format: "memory %.0f%%", telemetry.memoryMonitor.currentUsedFraction * Tuning.percentScale)
         case .gpu:
@@ -6187,10 +5972,13 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 telemetry.diskMonitor.currentWriteBytesPerSec / Tuning.bytesPerMiB
             )
         case .fan:
-            return String(format: "fan avg %.0f%%", telemetry.fanMonitor.currentUtilization * Tuning.percentScale)
+            return String(format: "fan %.0f%%", telemetry.fanMonitor.currentUtilization * Tuning.percentScale)
         case .battery:
             return String(format: "battery %.0f%%", telemetry.batteryMonitor.currentChargeFraction * Tuning.percentScale)
         case .temperature:
+            if telemetry.temperatureMonitor.perSensor.isEmpty {
+                return "temperature parked"
+            }
             return String(format: "temperature %.0f degrees Celsius", telemetry.temperatureMonitor.currentCelsius)
         case .ane:
             return String(format: "neural engine %.2f watts", telemetry.aneMonitor.currentWatts)
@@ -6221,20 +6009,16 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         return "Normal"
     }
 
-    // Temperature's primary value. No sensor reporting means every cluster is power-gated: the reader
-    // then parks currentCelsius at the floor the animation runs on, but nothing measured it, so the
-    // row bounds it with "≤" rather than presenting it as a measurement (see
-    // TemperatureLoadMonitor.sampleUsage).
+    // Temperature's primary value. No sensor reporting means every cluster is power-gated ("parked").
     // Once the kernel is throttling, THAT is what this row is watched for. Strictly the kernel's
     // doing; this app's own response to the same heat stays on throttleStatusItem, which says
     // "slowing animation" and never a temperature — the two rows must not read as one sentence
     // twice. It has to reach BOTH shapes: an all-clusters-parked read is a rendered state (hasSample
-    // stays true), not an unavailable one, so dropping it there would lose the annotation exactly
-    // when the machine is hot enough to park and throttle.
+    // stays true), not an unavailable one, so dropping it there would lose the annotation.
     private func temperatureValueText() -> String {
         let celsius = telemetry.temperatureMonitor.currentCelsius
         let parked = telemetry.temperatureMonitor.perSensor.isEmpty
-        let value = String(format: parked ? "≤%.0f °C" : "%.0f °C", celsius)
+        let value = parked ? "parked" : String(format: "%.0f °C", celsius)
         return KernelThermalPressure.current().isThrottling ? value + " · Thermal Throttling" : value
     }
 
@@ -6250,10 +6034,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         var clauses: [String] = []
         switch source {
         case .cpu:
-            // Which half of the chip carries the whole-machine figure. Both are smoothed series (not
-            // this tick's point read); nil throughout where no cluster map exists.
-            if let performance = telemetry.loadMonitor.smoothedPerformanceUsage,
-               let efficiency = telemetry.loadMonitor.smoothedEfficiencyUsage {
+            // Which half of the chip carries the whole-machine figure; nil where no cluster map exists.
+            if let performance = telemetry.loadMonitor.performanceUsage,
+               let efficiency = telemetry.loadMonitor.efficiencyUsage {
                 clauses.append(String(
                     format: "P %.0f%% · E %.0f%%",
                     performance * Tuning.percentScale,
@@ -6280,7 +6063,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                     Double(memory.swapTotalBytes) / Tuning.bytesPerGiB
                 ))
             }
-            // The rate is part of what drives the animation, so it surfaces while actively paging.
             if memory.hasSwapRateSample, memory.currentSwapRateBytesPerSec > 0 {
                 clauses.append(String(format: "%.1f MB/s", memory.currentSwapRateBytesPerSec / Tuning.bytesPerMiB))
             }
@@ -6300,11 +6082,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 clauses.append(String(format: "Fan %d %.0f RPM (%.0f%%)", index + 1, reading.rpm, reading.utilization * Tuning.percentScale))
             }
         case .battery:
-            // The drain that drives the animation while on battery, or "AC" when plugged in; health
-            // and cycles only while diagnostics are loaded (menu open on battery-capable hardware).
             if telemetry.batteryMonitor.onBattery {
                 if telemetry.batteryMonitor.currentDischargeMilliamps > 0 {
-                    clauses.append(String(format: "%.1f A", telemetry.batteryMonitor.currentDischargeMilliamps / 1000))
+                    clauses.append(String(format: "%.1f A", telemetry.batteryMonitor.currentDischargeMilliamps / Tuning.milliampsPerAmp))
                 }
             } else {
                 clauses.append("AC")
@@ -6651,8 +6431,11 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let running = (displayLink != nil || fallbackTimer != nil) ? 1 : 0
         let handoff = (effectiveDisplayMode != displayMode) ? 1 : 0
         let animW = animationView?.frame.width ?? 0
+        let usage = activeSourceCurrentUsage
+        let barH = Self.quantizedTraceBarHeight(for: usage)
         fputs("ANIM running=\(running) freeze=\(freeze) frame=\(frameIndex) "
-              + String(format: "speed=%.2f", speedMultiplier) + " labelHandoff=\(handoff) "
+              + String(format: "usage=%.2f speed=%.2f barH=%.1f ", usage, speedMultiplier, barH)
+              + "labelHandoff=\(handoff) "
               + String(format: "animW=%.1f\n", animW), stderr)
     }
 
@@ -6740,10 +6523,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             "SLOTS icon[\(frame(statusItem))] display=\(displayMode.rawValue) label=\"\(text)\"\n",
             stderr
         )
-    }
-
-    // Read-only: widthStatusItem pruned from menu.
-    private func refreshWidthInfo() {
     }
 
     // Parent title carries the readout ("Battery Release Threshold: 20%" / ": Never") and the rows mark the
@@ -6938,20 +6717,25 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         return "co-awake — \(spokenReading(for: source)), \(spokenState)\(modeSuffix)\(cdSpoken)"
     }
 
+    // Single source of truth for quantized trace-chart bar height (half-point steps).
+    // Maps 0…1 linearly across [labelChartBarWidth, labelChartHeight] so 0% is a baseline pill dot
+    // and every positive fraction rises monotonically above it.
+    private static func quantizedTraceBarHeight(for value: Double) -> CGFloat {
+        let clamped = min(max(value, 0), 1)
+        let minH = Tuning.labelChartBarWidth
+        let maxH = Tuning.labelChartHeight
+        let rawH = minH + CGFloat(clamped) * (maxH - minH)
+        return (rawH * 2.0).rounded() / 2.0
+    }
+
     private func currentTraceRenderSignature(
         countdown: String?,
         totalWidth: CGFloat,
         appearance: NSAppearance?
     ) -> TraceRenderSignature {
         let barCount = Tuning.labelChartBarCount
-        let barWidth = Tuning.labelChartBarWidth
-        let chartHeight = Tuning.labelChartHeight
         let trailing = loadHistory.suffix(min(loadHistory.count, barCount))
-        let quantizedBars = trailing.map { value -> Int in
-            let clamped = min(max(value, 0), 1)
-            let h = max(barWidth, CGFloat(clamped) * chartHeight)
-            return Int((h * 2.0).rounded())
-        }
+        let quantizedBars = trailing.map { Int((Self.quantizedTraceBarHeight(for: $0) * 2.0).rounded()) }
         let hold = awakeHold
         let paused = keepAwakeArmedNotHolding
         let isDark = appearance?.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -6959,7 +6743,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             quantizedBars: quantizedBars,
             isEmpty: loadHistory.isEmpty,
             isDark: isDark,
-            isBattery: activeLoadSource == .battery,
             tintTone: keepAwakeTint(for: hold, paused: paused)?.rawValue ?? "none",
             activeColorRaw: activeKeepAwakeColor.rawValue,
             countdown: countdown,
@@ -6972,12 +6755,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     // MARK: - Status Bar Trace Chart
-
-    private func traceChartColor(for value: Double, isBattery: Bool, dark: Bool) -> NSColor {
-        _ = value
-        _ = isBattery
-        return dark ? Tuning.traceChartMonoDark : Tuning.traceChartMonoLight
-    }
 
     private func makeTraceChartImage(countdown: String?, appearance: NSAppearance?) -> NSImage {
         let chartWidth = Tuning.labelChartWidth
@@ -7002,7 +6779,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let barCount = Tuning.labelChartBarCount
         let barWidth = Tuning.labelChartBarWidth
         let barRadius = barWidth / 2.0
-        let isBattery = (activeLoadSource == .battery)
         let isDark = appearance?.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let hold = awakeHold
         let paused = keepAwakeArmedNotHolding
@@ -7036,14 +6812,13 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             if !samples.isEmpty {
                 let count = min(samples.count, barCount)
                 let trailing = samples.suffix(count)
+                let monoColor = isDark ? Tuning.traceChartMonoDark : Tuning.traceChartMonoLight
+                monoColor.setFill()
                 for (offset, value) in trailing.enumerated() {
-                    let clamped = min(max(value, 0), 1)
                     let slot = barCount - count + offset
                     let x = plot.minX + CGFloat(slot) * slotWidth
-                    let rawH = max(barWidth, CGFloat(clamped) * plot.height)
-                    let h = CGFloat((rawH * 2.0).rounded()) / 2.0
+                    let h = Self.quantizedTraceBarHeight(for: value)
                     let barRect = NSRect(x: x, y: plot.minY, width: barWidth, height: h)
-                    self.traceChartColor(for: clamped, isBattery: isBattery, dark: isDark).setFill()
                     NSBezierPath(roundedRect: barRect, xRadius: barRadius, yRadius: barRadius).fill()
                 }
             }
@@ -7083,7 +6858,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         func field(_ live: @autoclosure () -> Double, max: Double) -> Double { ceiling ? max : live() }
         switch source {
         case .cpu:
-            return "CPU \(Self.percentField(field(telemetry.loadMonitor.smoothedUsage, max: 1)))%"
+            return "CPU \(Self.percentField(field(telemetry.loadMonitor.currentUtilization, max: 1)))%"
         case .memory:
             return "MEM \(Self.percentField(field(telemetry.memoryMonitor.currentUsedFraction, max: 1)))%"
         case .gpu:
@@ -7202,7 +6977,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         activeLoadSource = source
         loadHistory.removeAll(keepingCapacity: true)
         if let seed = sampleActiveSource(elapsed: nil) {
-            recordLoadSample(chartSample(forDriver: seed))
+            recordLoadSample(seed)
         }
         lastSampleUptime = nil
         reevaluateSpeedForCurrentConditions()
@@ -7851,7 +7626,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
         applySizing()
         renderCurrentFrame()
-        refreshWidthInfo()
 
         // New frame source: re-sync timing on the running driver rather than tearing it
         // down (the link's button/screen is unchanged, only the frames/durations differ).
@@ -7890,8 +7664,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func speedMultiplier(forUsage usage: Double) -> Double {
         let profile = currentSpeedProfile()
         let clampedUsage = min(max(usage, 0), 1)
-        let curvedUsage = pow(clampedUsage, profile.responseExponent)
-        var value = profile.min + ((profile.max - profile.min) * curvedUsage)
+        var value = profile.min + ((profile.max - profile.min) * clampedUsage)
         if isUnderPowerPressure {
             let ceiling = profile.min + (profile.max - profile.min) * Tuning.constrainedSpeedCeilingFraction
             value = min(value, ceiling)
@@ -7903,8 +7676,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // add to a strained machine (getters only — never mutates system state). Ordered most-serious
     // first so the combined menu line reads sensibly. Precise wording matters: only the *thermal*
     // case is throttling macOS actually imposes (it clocks the CPU/GPU down); Low Power Mode is a
-    // user-chosen policy, and memory pressure is memory *reclamation* (compression/swap/jetsam),
-    // not compute throttling — so neither is called "throttling."
+    // user-chosen policy.
     private var loadReductionReasons: [String] {
         var reasons: [String] = []
         let info = ProcessInfo.processInfo
@@ -7913,11 +7685,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         default: break
         }
         if info.isLowPowerModeEnabled { reasons.append("Low Power Mode") }
-        // Memory pressure is event-only (no synchronous getter), so this reads the cached level
-        // updated by the dispatch source. Requires `.normal` in the source's mask to ever clear.
-        if memoryPressureLevel.contains(.warning) || memoryPressureLevel.contains(.critical) {
-            reasons.append("memory pressure")
-        }
         return reasons
     }
 
@@ -7927,11 +7694,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var isUnderPowerPressure: Bool { !loadReductionReasons.isEmpty }
 
     // Recompute this app's OWN auto animation speed from the active source's latest sample
-    // immediately, bypassing the sample-tick hysteresis. Called when power/thermal/memory-
-    // pressure state flips, or when the load source changes, so the app's self-imposed speed
-    // cap engages (or lifts) — or the new source takes over — without waiting for the next
-    // loadSampleInterval tick. Consults the ACTIVE source, not CPU specifically. Changes nothing
-    // outside this app.
+    // immediately when power/thermal state flips or when the load source changes, so the app's
+    // self-imposed speed cap engages (or lifts) — or the new source takes over — without waiting for
+    // the next loadSampleInterval tick. Consults the ACTIVE source. Changes nothing outside this app.
     private func reevaluateSpeedForCurrentConditions() {
         guard isAutoSpeed, activeSourceHasSample else { return }
         speedMultiplier = speedMultiplier(forUsage: activeSourceCurrentUsage)
@@ -7942,8 +7707,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // independent: the speed recompute keeps its auto-speed guard (it no-ops under
     // --speed-multiplier or before the first sample), while sleep prevention must run
     // unconditionally so it can still DISENGAGE in those cases — so it does NOT piggyback on the
-    // guarded recompute. Memory pressure is not a sleep trigger, so its dispatch source keeps
-    // calling reevaluateSpeedForCurrentConditions() directly.
+    // guarded recompute.
     private func conditionsDidChange() {
         reevaluateSpeedForCurrentConditions()   // existing, guarded (auto-speed only)
         updateSleepPrevention()                 // unguarded (always applies keep-awake conditions)
@@ -8361,7 +8125,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     }
 
     // Status-item length (points) the GIF maps to: menu-bar height × aspect, floored so a
-    // tall/narrow GIF still gets a tappable slot. Shared by applySizing and refreshWidthInfo.
+    // tall/narrow GIF still gets a tappable slot.
     private func slotLength() -> CGFloat {
         let barHeight = max(NSStatusBar.system.thickness - Tuning.renderVerticalInset, 1)
         return ceil(max(barHeight * currentGifAspect() + Tuning.renderHorizontalInset, Tuning.minBaseSlotWidth))

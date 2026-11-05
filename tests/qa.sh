@@ -234,8 +234,8 @@ ok "…says why, on stderr, with stdout empty" \
 # An unavailable source is an ABSENT key, never a null and never a 0 — asserted through the existing
 # simulator, since every reader really works on this hardware.
 # One row per source whose keys are built differently: gpu (one reader, three keys), battery (the
-# charge reader plus its diagnostics), temperature (where the reader holds a scale floor that would
-# otherwise leak out as a reading). The vocabulary checks above can only judge a key that is there;
+# charge reader plus its diagnostics), temperature (where parked clusters must not leak as a reading).
+# The vocabulary checks above can only judge a key that is there;
 # these are the half that proves an unknown reading is a missing key.
 fu(){ src="$1"; shift; CO_AWAKE_FORCE_UNAVAILABLE=$src $BIN snapshot >"$J" 2>/dev/null; rc=$?
   leaked=""; for k in "$@"; do grep -q "\"$k\":" "$J" && leaked="$leaked $k"; done
@@ -1010,6 +1010,55 @@ else
        "distinct frames=$frames raw:\n$anim"
   fi
 fi
+
+# 3. First-principles reader-to-bar-and-speed contract:
+#    - Live memory usage maps 1:1 (no 55% floor subtraction) to usage, barH, and speed.
+#    - Across 0% -> 10% -> 54% -> 100% (via CO_AWAKE_FORCE_BATTERY on --load-source battery),
+#      usage, barH, and speed increase monotonically, and 10% is strictly taller than the
+#      0% quantized dot baseline (2.5pt), proving the 0–18.6% dead zone is gone.
+FP_ST="$PWD/tmp/qa-fp-state.json"
+mem_out=$(CO_AWAKE_STATE_FILE="$FP_ST" CO_AWAKE_LOG_ANIMATION=1 CO_AWAKE_LOG_THERMAL=1 \
+          CO_AWAKE_EXIT_AFTER=2.5 $BIN --display trace --load-source memory 2>&1)
+rm -f "$FP_ST"
+mem_pct=$(echo "$mem_out" | grep '^THERMAL' | tail -1 | sed -nE 's/.*row="Memory: ([0-9]+)%".*/\1/p')
+mem_usage=$(echo "$mem_out" | grep '^ANIM' | tail -1 | sed -nE 's/.*usage=([0-9.]+).*/\1/p')
+mem_bar=$(echo "$mem_out" | grep '^ANIM' | tail -1 | sed -nE 's/.*barH=([0-9.]+).*/\1/p')
+fk "memory usage matches displayed Memory % without floor subtraction" \
+   "$([ -n "$mem_pct" ] && [ -n "$mem_usage" ] && [ -n "$mem_bar" ] \
+      && awk -v p="$mem_pct" -v u="$mem_usage" -v b="$mem_bar" \
+         'BEGIN { exp_b = int(((2.6 + u * (14.0 - 2.6)) * 2.0) + 0.5) / 2.0;
+                  diff_b = (b > exp_b) ? (b - exp_b) : (exp_b - b);
+                  exit !(u * 100 - p >= -1.5 && u * 100 - p <= 1.5 && diff_b <= 0.5 && (p < 10 || b > 2.5)) }' \
+      && echo 1 || echo 0)" \
+   "mem_pct=$mem_pct usage=$mem_usage barH=$mem_bar"
+
+sample_bat() {
+  local pct="$1"
+  local out
+  out=$(CO_AWAKE_STATE_FILE="$FP_ST" CO_AWAKE_FORCE_BATTERY="${pct}:ac" CO_AWAKE_LOG_ANIMATION=1 \
+        CO_AWAKE_EXIT_AFTER=2.5 $BIN --preset horse-white --display trace --load-source battery 2>&1 \
+        | grep '^ANIM' | tail -1)
+  rm -f "$FP_ST"
+  echo "$out" | sed -nE 's/.*usage=([0-9.]+) speed=([0-9.]+) barH=([0-9.]+).*/\1 \2 \3/p'
+}
+set -- $(sample_bat 0) $(sample_bat 10) $(sample_bat 54) $(sample_bat 100)
+# $1=u0 $2=s0 $3=b0  $4=u10 $5=s10 $6=b10  $7=u54 $8=s54 $9=b54  $10=u100 $11=s100 $12=b100
+# Under Low Power Mode or serious/critical thermal pressure, speed is capped at midpoint (1.38x),
+# so s54 <= s100 holds with equality while s0 < s10 < s54 still increases strictly.
+fk "0% -> 10% -> 54% -> 100% maps strictly monotonically to usage and barH (no 0–18.6% dot dead zone)" \
+   "$([ "$#" -eq 12 ] && awk -v u0="$1" -v s0="$2" -v b0="$3" \
+      -v u10="$4" -v s10="$5" -v b10="$6" \
+      -v u54="$7" -v s54="$8" -v b54="$9" \
+      -v u100="${10}" -v s100="${11}" -v b100="${12}" \
+      'BEGIN {
+        exit !(u0 == 0.00 && b0 == 2.5 &&
+               u10 == 0.10 && b10 == 3.5 && b10 > b0 &&
+               u54 == 0.54 && b54 == 9.0 && b54 > b10 &&
+               u100 == 1.00 && b100 == 14.0 && b100 > b54 &&
+               s0 < s10 && s10 < s54 && s54 <= s100)
+      }' && echo 1 || echo 0)" \
+   "got: $* (expected: 0.00/s0/2.5 < 0.10/s10/3.5 < 0.54/s54/9.0 <= 1.00/s100/14.0)"
+
 echo "  animation driver & display modes: passes=$pass fails=$fail"; total_fail=$((total_fail+fail))
 
 # --- §3h Battery diagnostics [gui] -----------------------------------------

@@ -110,7 +110,7 @@ load (default); `trace` — a 12-slot monochrome sparkline; `value` — a live r
 **Ten load sources** (`--load-source`, or click its readout row in the menu) choose what drives the animation:
 `cpu` (default, with a P/E-cluster split), `memory` (with swap), `bandwidth` (DRAM bus GB/s — usually
 the ceiling for local model inference), `gpu` (with a Renderer/Tiler split), `network`, `disk`, `fan`,
-`battery` (discharge current), `temperature` (hottest die sensor, on a fixed 30–100 °C scale), and
+`battery` (charge level, with discharge current in `Diagnostics ▸`), `temperature` (hottest die sensor, 0–100 °C), and
 `ane` (Neural Engine watts — the load CPU and GPU can't see). A source this Mac can't read is hidden
 and falls back to `cpu`. How each is measured: [ARCHITECTURE § 4](docs/ARCHITECTURE.md#4-hardware-telemetry--scaling-subsystems).
 
@@ -239,7 +239,7 @@ active preset, and the current load level:
 
 - **CPU:** ~0.4–0.9% of one core while the icon is animating and visible; **0% when hidden** (the
   game loop stops when the item is occluded by the notch, a full-screen app, or an inactive Space).
-  Capped at half speed under Low Power Mode / thermal / memory pressure. With **Reduce Motion** on,
+  Capped at half speed under Low Power Mode / thermal pressure. With **Reduce Motion** on,
   the animation stops and the status bar shows the live value instead.
 - **Memory:** ~10 MB at launch, ~20–24 MB once the menu has been opened — essentially the AppKit
   floor for a menu-bar app.
@@ -298,7 +298,7 @@ dashboard):
 | **Category** | Animated load indicator | Animated load indicator | Animated load indicator | System monitor |
 | **Packaging** | Single Swift file + shell launcher (no Xcode project) | Xcode `.app` | Xcode `.app` | Xcode `.app` |
 | **Load sources** | CPU (with P/E split), memory+swap, DRAM bus bandwidth, GPU (with Renderer/Tiler split), network, disk, fan, battery, die temperature, Neural Engine power | CPU | CPU, GPU, RAM | Full hardware suite |
-| **Unbounded rates (net/disk/swap) drive the animation** | Yes — adaptive auto-scaling | — | — | n/a (numeric display) |
+| **Unbounded rates (net/disk/bus/ANE) drive the animation** | Yes — stateless logarithmic scaling | — | — | n/a (numeric display) |
 | **In-menu readout** | Live numerics per source, with P/E and Renderer/Tiler splits | Minimal | Numeric dropdown | Full graphs, temps, per-process |
 | **Battery health / cycle count** | Yes (menu-gated, unprivileged, never polled) | No | No | Yes |
 | **Per-process breakdowns** | No (out of scope by design) | No | No | Yes |
@@ -343,12 +343,6 @@ All rights remain with their respective owners:
 - `chihiro-walk.gif`, `chihiro-walk-white.gif`, `chihiro-walk-black.gif` — "Chihiro" (Spirited Away)
   © Studio Ghibli.
 - `running-horse-black.gif`, `running-horse-white.gif` — animal silhouettes from public sources (original authorship unverified).
-
-**Third-party code.** `ThroughputScaler` — the adaptive ceiling that normalizes unbounded rate
-sources (network, disk, swap, battery draw) — is a Swift port of the auto-scale logic in
-[`btop`](https://github.com/aristocratos/btop)'s `Net::collect` (`src/osx/btop_collect.cpp`), which is
-licensed under **Apache-2.0** © Jakob P. Liljenberg. No btop source is vendored; the algorithm is
-reimplemented and credited here and at the call site.
 
 This project is **not affiliated with, endorsed by, or sponsored by** any of these rights holders. It
 is a free, non-commercial, open-source hobby utility, and the artwork is here to demonstrate and study

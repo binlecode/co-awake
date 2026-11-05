@@ -38,6 +38,19 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.5] - 2026-11-05
+
+### Fixed
+
+- **Aligned trace-chart bar heights and GIF animation speed 1:1 with live reader values.**
+  Removed artificial baseline subtractions (`memoryIdleFloor = 0.55`, `temperatureFloorCelsius = 30`),
+  `cpuSmoothingAlpha = 0.2` EMA lag, `speedUpdateHysteresis = 0.08` deadband, and memory-pressure
+  reverse speed throttling; unified Battery on `currentChargeFraction` and Fan on the most utilized
+  fan; mapped trace-chart bars linearly across `[labelChartBarWidth, labelChartHeight]` (`[2.6pt, 14.0pt]`)
+  to eliminate the `0%–18.6%` minimum-dot dead zone; and replaced stateful `ThroughputScaler` with
+  stateless logarithmic scaling (`Tuning.logScale`) for unbounded rate sources (network, disk, ANE,
+  DRAM bus bandwidth).
+
 ## [3.1.4] - 2026-10-29
 
 ### Fixed
