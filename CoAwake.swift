@@ -26,9 +26,10 @@ private enum AppInfo {
         return "0.0.0"
     }()
     static let name = "co-awake"
-    static let tagline = "An animated GIF in the macOS menu bar, its playback speed driven by live system load."
+    static let tagline = "macOS menu-bar hardware telemetry and sleep supervisor — runner GIF, 12-bar trace chart, or live readout across 10 unprivileged readers, with PID-bound Keep Awake and a headless JSON CLI."
     static let copyright = "© 2026 Bin Le"
     static let license = "MIT License"
+    static let websiteURL = "https://awake.binlecode.com"
     static let repositoryURL = "https://github.com/binlecode/co-awake"
     static var releasesURL: String { "\(repositoryURL)/releases" }
 }
@@ -5195,26 +5196,35 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func showAbout() {
         let alert = NSAlert()
         // messageText is the bold title; keep it the app + version, the way a standard macOS About
-        // panel reads. The body carries the tagline, live mode, and the OSS credits/copyright block.
+        // panel reads. The body carries the tagline, live mode/source/hold state, and OSS credits.
         alert.messageText = "\(AppInfo.name) \(AppInfo.version)"
         if let icon = makeMenuAlertIcon() {
             alert.icon = icon
         }
-        let speedMode = isAutoSpeed
-            ? "Speed adapts to \(activeLoadSource.menuTitle) load (change it from the menu)."
-            : "Fixed speed: \(String(format: "%.2f", speedMultiplier))×."
+        let sourceLine = telemetry.hasSample(activeLoadSource)
+            ? usageLineText(for: activeLoadSource)
+            : "\(activeLoadSource.menuTitle) (warming up)"
+        let speedSuffix = (displayMode == .gif)
+            ? (isAutoSpeed
+                ? String(format: " · %.2f× auto", speedMultiplier)
+                : String(format: " · %.2f× fixed", speedMultiplier))
+            : ""
+        let modeSummary = "Display: \(displayMode.menuTitle) · \(sourceLine)\(speedSuffix)\n\(awakeHold.rowText)"
         alert.informativeText = [
             AppInfo.tagline,
-            speedMode,
-            "\(AppInfo.copyright) · \(AppInfo.license)",
+            modeSummary,
+            "\(AppInfo.copyright) · \(AppInfo.license)\n\(AppInfo.websiteURL)",
             "Preset artwork © its respective creators — see the repository for attribution.",
         ].joined(separator: "\n\n")
         alert.alertStyle = .informational
-        // Standard OSS About affordance: a link out to the project. First button is the default
-        // (rightmost / Return); "View on GitHub" sits to its left and opens the repo.
+        // Standard OSS About affordance: default OK button, Website, and View on GitHub.
         alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Website")
         alert.addButton(withTitle: "View on GitHub")
-        if alert.runModal() == .alertSecondButtonReturn, let url = URL(string: AppInfo.repositoryURL) {
+        let response = alert.runModal()
+        if response == .alertSecondButtonReturn, let url = URL(string: AppInfo.websiteURL) {
+            NSWorkspace.shared.open(url)
+        } else if response == .alertThirdButtonReturn, let url = URL(string: AppInfo.repositoryURL) {
             NSWorkspace.shared.open(url)
         }
     }

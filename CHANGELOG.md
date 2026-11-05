@@ -38,6 +38,17 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.6] - 2026-11-05
+
+### Fixed
+
+- **Refreshed About dialog and cover page (`awake.binlecode.com`) to match current single-slot architecture and v3.1 telemetry.**
+  Updated `AppInfo.tagline` and `showAbout()` to report the active display mode (`Runner GIF`,
+  `Trace Chart`, or `Live Value`), live source reading, Keep Awake hold state, and a direct `Website`
+  button (`https://awake.binlecode.com`); updated `docs/media/cover.html` interactive demos and copy
+  to show the 10-source 4-tier menu, monochrome trace-chart pill bars, single-slot inline countdown,
+  and `CO_AWAKE_DISPLAY`.
+
 ## [3.1.5] - 2026-11-05
 
 ### Fixed

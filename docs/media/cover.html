@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>co-awake</title>
+<title>co-awake — macOS Menu-Bar Load Visualizer, Telemetry &amp; Keep Awake</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>%F0%9F%90%8E</text></svg>">
 <style>
   :root{
@@ -616,12 +616,12 @@
   </header>
 
   <div class="hero">
-    <p class="eyebrow kicker">Native macOS · Menu bar · Swift + AppKit</p>
+    <p class="eyebrow kicker">Native macOS · Menu bar · Swift + AppKit · CLI-First</p>
     <h1>Something small is <em>running</em> in your&nbsp;menu&nbsp;bar.</h1>
-    <p class="lede">A horse, a soot sprite, Totoro. It trots when the machine is calm and
-      <b>breaks into a sprint when the system is under load</b> — a live, ambient read on CPU,
-      memory, DRAM bandwidth, GPU, network, disk, fan, battery, die temperature or the neural engine,
-      tucked into the status bar you already stare at.</p>
+    <p class="lede">A running creature, a 12-bar monochrome sparkline, or a zero-jitter live readout —
+      driven 1:1 by live <b>CPU, memory, DRAM bus bandwidth, GPU, network, disk, fan, battery, die
+      temperature or Neural Engine power</b>, with built-in PID-bound <b>Keep Awake</b> and a one-line
+      JSON CLI (<span class="mono">awake snapshot</span>) for scripts and agents.</p>
 
     <!-- interactive: load → tempo mapping, the app's whole idea -->
     <div class="demo">
@@ -710,30 +710,28 @@
 
   <section id="readout">
     <div class="sechead">
-      <h2>Want the number too? It’s right&nbsp;there.</h2>
-      <span class="n">Label + live dashboard</span>
+      <h2>One slot, three forms — and the full&nbsp;dashboard.</h2>
+      <span class="n">Display modes + 4-tier menu</span>
     </div>
     <div class="readout-grid">
       <div class="readout-copy">
         <p>Choose your visual focus: <span class="mono">--display&nbsp;gif</span> shows the animated creature;
-          <span class="mono">--display&nbsp;trace</span> shows a compact monochrome sparkline;
-          <span class="mono">--display&nbsp;value</span> prints the active source’s live reading —
-          <span class="mono">CPU&nbsp;47%</span>, <span class="mono">NET&nbsp;↓3.4&nbsp;↑0.1</span>.
-          Single status item architecture: exactly one representation is active, eliminating clutter and lateral jitter.</p>
-        <p>Its slot maintains a <b>fixed width</b> with zero jitter. When Keep Awake is armed, the countdown timer
-          appears seamlessly beside the active element.</p>
-        <p>And it doubles as a Keep Awake indicator: while the Mac is being held awake the element
-          <b>wears the same tint as the track line</b>.</p>
+          <span class="mono">--display&nbsp;trace</span> shows a 12-bar monochrome sparkline mapped 1:1 to the active reading;
+          <span class="mono">--display&nbsp;value</span> prints the monospaced live reading —
+          <span class="mono">CPU&nbsp;47%</span>, <span class="mono">MEM&nbsp;54%</span>, <span class="mono">NET&nbsp;↓3.4&nbsp;↑0.1</span>.
+          Single status item architecture: one slot in the menu bar, zero clutter and zero lateral jitter.</p>
+        <p>In <span class="mono">trace</span> and <span class="mono">value</span> modes the 60&nbsp;Hz display link stops completely (0% render CPU), and <span class="mono">TraceRenderSignature</span> skips redundant image redraws on steady ticks.</p>
+        <p>When Keep Awake is armed with a timer, the countdown appears right beside the active mode — wearing the same tint as the bottom track line.</p>
         <div class="seg" role="group" aria-label="Display mode">
           <button type="button" data-mode="gif" aria-pressed="true">Runner GIF</button>
           <button type="button" data-mode="trace" aria-pressed="false">Trace Chart</button>
           <button type="button" data-mode="value" aria-pressed="false">Live Value</button>
         </div>
-        <p class="readout-note">…and the dropdown gives direct control: one-click Keep Awake, live hardware telemetry — click any readout to choose what drives the runner.</p>
+        <p class="readout-note">…and the 4-tier dropdown gives direct control: one-click Keep Awake, all 10 live hardware telemetry rows (click any row to switch what drives the slot), Diagnostics splits, and Settings.</p>
       </div>
       <div class="readout-stage">
         <div class="barmock" role="img" aria-label="A macOS menu bar with a live status item">
-          <span class="apple"></span>
+          <span class="apple"></span>
           <span class="mtitle">Terminal</span>
           <span class="spacer"></span>
           <span class="runner-slot" id="readoutSlot"><img src="../gifs/running-horse-white.gif" alt="Running horse"></span>
@@ -743,19 +741,27 @@
           <div class="drow drow-action"><span class="k">Stop Keep Awake</span><span class="v" style="color:var(--river)">29:58 left</span></div>
           <div class="drow drow-sub"><span class="k">Keep Awake For</span><span class="v">▸</span></div>
           <div class="dsep"></div>
-          <div class="drow active" data-metric="CPU 47%"><span class="k">● CPU</span><span class="v" id="dashUsage">47%</span></div>
-          <div class="drow" data-metric="MEM 36%"><span class="k">&nbsp;&nbsp;Memory</span><span class="v">36%</span></div>
-          <div class="drow" data-metric="GPU 29%"><span class="k">&nbsp;&nbsp;GPU</span><span class="v">29%</span></div>
-          <div class="drow" data-metric="BW 24.3G"><span class="k">&nbsp;&nbsp;Memory Bandwidth</span><span class="v">24.3 GB/s</span></div>
-          <div class="drow" data-metric="BAT 80%"><span class="k">&nbsp;&nbsp;Battery</span><span class="v">80%</span></div>
+          <div class="drow active" data-metric="CPU 47%" data-pct="47"><span class="k">● CPU</span><span class="v" id="dashUsage">47%</span></div>
+          <div class="drow" data-metric="MEM 54%" data-pct="54"><span class="k">&nbsp;&nbsp;Memory</span><span class="v">54%</span></div>
+          <div class="drow" data-metric="GPU 29%" data-pct="29"><span class="k">&nbsp;&nbsp;GPU</span><span class="v">29%</span></div>
+          <div class="drow" data-metric="NET ↓3.4 ↑0.1" data-pct="38"><span class="k">&nbsp;&nbsp;Network</span><span class="v">↓3.4 ↑0.1 MB/s</span></div>
+          <div class="drow" data-metric="DSK R12 W4" data-pct="24"><span class="k">&nbsp;&nbsp;Disk</span><span class="v">R 12.0 · W 4.0 MB/s</span></div>
+          <div class="drow" data-metric="FAN 45%" data-pct="45"><span class="k">&nbsp;&nbsp;Fan</span><span class="v">2160 RPM</span></div>
+          <div class="drow" data-metric="BAT 80%" data-pct="80"><span class="k">&nbsp;&nbsp;Battery</span><span class="v">80%</span></div>
+          <div class="drow" data-metric="TMP  56°" data-pct="56"><span class="k">&nbsp;&nbsp;Temperature</span><span class="v">56 °C</span></div>
+          <div class="drow" data-metric="ANE 1.4W" data-pct="58"><span class="k">&nbsp;&nbsp;ANE</span><span class="v">1.40 W</span></div>
+          <div class="drow" data-metric="BW 58.3 GB/s" data-pct="43"><span class="k">&nbsp;&nbsp;Memory Bandwidth</span><span class="v">58.3 GB/s</span></div>
           <div class="dsep"></div>
           <div class="drow drow-sub"><span class="k">Diagnostics</span><span class="v">▸</span></div>
           <div class="drow drow-sub"><span class="k">Settings</span><span class="v">▸</span></div>
+          <div class="dsep"></div>
+          <div class="drow drow-sub"><span class="k">About</span><span class="v"></span></div>
+          <div class="drow drow-sub"><span class="k">Quit co-awake</span><span class="v">⌘Q</span></div>
         </div>
         <span class="caption" id="labelCaption">flip the display modes — runner GIF, trace chart, or live value</span>
       </div>
     </div>
-    <p class="heroBar cap">Default is runner GIF; switchable live from the <span class="mono">Display Mode</span> submenu, or at launch via <span class="mono">--display</span> / <span class="mono">CO_AWARENESS_DISPLAY</span>.</p>
+    <p class="heroBar cap">Default is runner GIF; switchable live from <span class="mono">Settings ▸ Display Mode</span>, or via <span class="mono">awake --display &lt;gif|trace|value&gt;</span> / <span class="mono">CO_AWAKE_DISPLAY</span>.</p>
   </section>
 
   <section id="cast">
@@ -791,18 +797,18 @@
 
   <section id="mark">
     <div class="sechead">
-      <h2>One mark, in two places at&nbsp;once</h2>
+      <h2>One mark across the slot and&nbsp;countdown</h2>
       <span class="n">The indicator</span>
     </div>
     <div class="mk">
       <div class="mk-copy">
-        <p>While the Mac is being held awake, the app says so <b>twice, in the same color, in the same
-          instant</b>: a <b>2pt track line</b> rides the bottom edge of the icon, and the adjacent label
-          <b>wears that same tint</b> instead of the menu bar's own text color. Two marks, one state — so
-          whichever one your eye lands on, you know.</p>
+        <p>While the Mac is being held awake, the single status item says so <b>in one coordinated tint</b>:
+          a <b>2pt track line</b> rides the bottom edge of the runner GIF or trace chart, and any active
+          countdown (<span class="mono">29:58</span>) or live value readout <b>wears that same tint</b>
+          instead of the menu bar's default text color.</p>
         <p>The line is a <b>sibling layer over the artwork</b>, never painted into it. Toggling it
-          re-rasterizes nothing; it spans the item's <b>full width</b>, sits flush on the bottom edge, and
-          snaps rather than slides when the slot resizes. The creature keeps running underneath, untouched.</p>
+          re-rasterizes nothing; it spans the plot's <b>full width</b>, sits flush on the bottom edge, and
+          the creature keeps running underneath, untouched.</p>
         <p class="tight">Both marks key on <b>what is actually holding the Mac</b>, never on the menu
           checkmark — and brightness tracks <i>how much of a hold there is</i>, rather than simply meaning
           “held”. Three tones, always in step with each other: <b>solid</b> while this app is holding the
@@ -833,16 +839,16 @@
           <span class="mk-note span">full item width</span>
         </div>
 
-        <!-- 2. true scale: both marks at once, on a real bar -->
-        <div class="mk-bar" role="img" aria-label="A macOS menu bar where the track line under the icon and the adjacent label share one Keep Awake tint">
-          <span class="apple"></span>
+        <!-- 2. true scale: single status item + inline countdown on a real bar -->
+        <div class="mk-bar" role="img" aria-label="A macOS menu bar where the track line under the icon and the inline countdown share one Keep Awake tint">
+          <span class="apple"></span>
           <span class="mtitle">Xcode</span>
           <span class="spacer"></span>
-          <span class="mk-label" id="mkLabel">CPU 47%</span>
           <span class="runner-slot">
             <img src="../gifs/running-horse-white.gif" alt="" id="mkBarArt">
             <span class="mk-bar-line" id="mkBarLine"></span>
           </span>
+          <span class="mk-label" id="mkLabel">29:58</span>
           <span class="clock">Wed 2:14</span>
         </div>
 
@@ -977,7 +983,7 @@
     <div class="awake-facts">
       <div class="fact">
         <h4>⌥-click to toggle it, no menu</h4>
-        <p>Option-clicking the creature — or either number slot — turns Keep Awake on and off in place,
+        <p>Option-clicking the status item — in GIF, trace, or value mode — turns Keep Awake on and off in place,
           the way ⌥-clicking Wi-Fi or Battery works. On arms it with <b>no window</b>; off releases
           whatever is running, its window and its low-battery override together. It's a shortcut
           <i>through</i> the submenu's own two paths rather than a second copy of them, so the battery
@@ -993,7 +999,7 @@
       </div>
       <div class="fact">
         <h4>Move the battery cliff</h4>
-        <p><b>Battery Threshold</b> sets the release point live — 10, 15, 20, 30%, a custom
+        <p><b>Battery Release Threshold</b> (under <span class="mono">Keep Awake For ▸</span>) sets the release point live — 10, 15, 20, 30%, a custom
           percent, or <b>Never</b> — and remembers it across launches. A change lands on a window that's
           <i>already</i> running, not at the next one. Whole percents only:
           <span class="mono">0.20</span> reads as 0.2% or 20% depending on who's asking, so it's refused
@@ -1321,9 +1327,10 @@
     var html='';
     var arr=count?trace.slice(-count):trace;
     for(var t=0;t<arr.length;t++){
-      var u=arr[t];
-      var col=u<40?'#8AB394':(u<70?'#D4B885':'#CC7566');
-      html+='<i style="height:'+Math.max(u,10)+'%;background:'+col+'"></i>';
+      var u=Math.min(Math.max(arr[t]/100,0),1);
+      // Matches quantizedTraceBarHeight: 2.6pt..14.0pt mapped linearly across 14pt plot height
+      var pct=((2.6+u*(14.0-2.6))/14.0*100).toFixed(1);
+      html+='<i style="height:'+pct+'%;background:rgba(255,255,255,0.9);border-radius:999px"></i>';
     }
     return html;
   }
@@ -1341,8 +1348,12 @@
       var k = this.querySelector('.k');
       if (k) k.innerHTML = '● ' + k.textContent.trim();
       currentMetricValue = this.getAttribute('data-metric');
+      var pct = +(this.getAttribute('data-pct') || 47);
+      trace.push(pct);
       if (currentDisplayMode === 'value' && readoutSlot) {
         readoutSlot.innerHTML = '<span class="val-text">' + currentMetricValue + '</span>';
+      } else if (currentDisplayMode === 'trace' && readoutSlot) {
+        readoutSlot.innerHTML = '<span class="mini">' + traceBars(12) + '</span>';
       }
     });
   });
