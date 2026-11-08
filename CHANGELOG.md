@@ -38,6 +38,18 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.8] - 2026-11-08
+
+### Fixed
+
+- **Keep Awake vertical layering & zero-jitter stability across all three display modes (`.gif`, `.trace`, `.value`).**
+  Fixed the `.trace` 14pt bar band (`labelChartImageHeight = 20`) above the 2pt underline + 2pt gap
+  so `quantizedTraceBarHeight` preserves full `[2.5, 14.0]` pt dynamics without squashing low-load
+  bars; pinned `gifLayer.frame` and `contentsScale` across `updateDisplaySlot()` and
+  `updateKeepAwakeBar()` so toggling Keep Awake never jumps the GIF vertically; added
+  `ValueRenderSignature` caching and `lastValueDisplayText` reporting to `.value` mode so steady-state
+  ticks skip redundant `NSImage` rebuilds and `CO_AWAKE_LOG_SLOTS` reports the live readout.
+
 ## [3.1.7] - 2026-11-07
 ### Fixed
 - **Visual Separation**: Keep Awake bar in GIF/Trace/Value display modes now includes a 2pt gap from the content, preventing overlap and improving readability.
