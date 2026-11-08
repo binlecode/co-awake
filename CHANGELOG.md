@@ -38,6 +38,11 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.7] - 2026-11-07
+### Fixed
+- **Visual Separation**: Keep Awake bar in GIF/Trace/Value display modes now includes a 2pt gap from the content, preventing overlap and improving readability.
+- **Rendering**: Fixed potential subview clipping issues on macOS 15+ status item buttons by unifying Keep Awake UI layering.
+
 ## [3.1.6] - 2026-11-05
 
 ### Fixed

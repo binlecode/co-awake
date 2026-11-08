@@ -609,6 +609,7 @@ private enum Tuning {
     static let keepAwakeBarSageDark = NSColor(srgbRed: 0.576, green: 0.710, blue: 0.514, alpha: 1) // #93B583
     static let keepAwakeBarSageLight = NSColor(srgbRed: 0.392, green: 0.522, blue: 0.353, alpha: 1) // #64855A
     static let keepAwakeBarThickness: CGFloat = 2
+    static let keepAwakeBarGap: CGFloat = 2
 
     // Status bar trace-chart monochrome colors (calibrated for dark/light appearance).
     static let traceChartMonoDark = NSColor(white: 0.90, alpha: 1.0)
@@ -4485,6 +4486,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // Layer-backed host view pinned over the status-item button. Frame swaps go to its
     // layer.contents, bypassing NSButton's setImage: → _adjustLength → Auto Layout cascade.
     private var animationView: NSView?
+    private var gifLayer: CALayer?
     private var loadTimer: Timer?
     // Monotonic timestamp of the previous load sample, for counter-delta sources (swap rate now;
     // network/disk later). nil until the first tick / after a source switch, so rate-based signals
@@ -6673,8 +6675,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             if animationView?.superview != nil { animationView?.removeFromSuperview() }
             if !countdownLabel.isHidden { countdownLabel.isHidden = true }
             if countdownLabel.superview != nil { countdownLabel.removeFromSuperview() }
-            if button.image != nil { button.image = nil }
-            if button.imagePosition != .noImage { button.imagePosition = .noImage }
 
             let baseText = compactLabelText(for: activeLoadSource)
             let displayText: String
@@ -6699,16 +6699,39 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             }
 
             let targetColor = tintColor ?? NSColor.labelColor
-            if button.title != displayText {
-                button.title = displayText
+            
+            // New: Draw as image to allow underline + gap
+            let imageSize = NSSize(width: totalW, height: NSStatusBar.system.thickness)
+            let img = NSImage(size: imageSize, flipped: false) { _ in
+                // Draw underline
+                if let tint = tintColor {
+                    let barRect = NSRect(x: 0, y: 0, width: totalW, height: Tuning.keepAwakeBarThickness)
+                    tint.setFill()
+                    NSBezierPath(rect: barRect).fill()
+                }
+                
+                // Draw text
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: Self.labelFont,
+                    .foregroundColor: targetColor,
+                ]
+                let textSize = (displayText as NSString).size(withAttributes: attrs)
+                let textY = (self.keepAwakeTint(for: self.awakeHold, paused: self.keepAwakeArmedNotHolding) != nil) 
+                            ? (Tuning.keepAwakeBarThickness + Tuning.keepAwakeBarGap) 
+                            : 0
+                (displayText as NSString).draw(
+                    at: NSPoint(x: pad / 2.0, y: textY + (imageSize.height - (textY + textSize.height)) / 2.0),
+                    withAttributes: attrs
+                )
+                return true
             }
-            let nextAttr = NSAttributedString(
-                string: displayText,
-                attributes: [.foregroundColor: targetColor, .font: Self.labelFont]
-            )
-            if button.attributedTitle != nextAttr {
-                button.attributedTitle = nextAttr
-            }
+            img.isTemplate = false
+            button.image = img
+            button.imagePosition = .imageOnly
+            
+            if !button.title.isEmpty { button.title = "" }
+            if button.attributedTitle.length > 0 { button.attributedTitle = NSAttributedString() }
+
             let a11y = displayText.replacingOccurrences(of: "\u{2007}", with: "")
             if button.accessibilityLabel() != a11y {
                 button.setAccessibilityLabel(a11y)
@@ -6730,10 +6753,10 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // Single source of truth for quantized trace-chart bar height (half-point steps).
     // Maps 0…1 linearly across [labelChartBarWidth, labelChartHeight] so 0% is a baseline pill dot
     // and every positive fraction rises monotonically above it.
-    private static func quantizedTraceBarHeight(for value: Double) -> CGFloat {
+    private static func quantizedTraceBarHeight(for value: Double, maxHeight: CGFloat = Tuning.labelChartHeight) -> CGFloat {
         let clamped = min(max(value, 0), 1)
         let minH = Tuning.labelChartBarWidth
-        let maxH = Tuning.labelChartHeight
+        let maxH = maxHeight
         let rawH = minH + CGFloat(clamped) * (maxH - minH)
         return (rawH * 2.0).rounded() / 2.0
     }
@@ -6824,11 +6847,13 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 let trailing = samples.suffix(count)
                 let monoColor = isDark ? Tuning.traceChartMonoDark : Tuning.traceChartMonoLight
                 monoColor.setFill()
+                let barMaxH = Tuning.labelChartHeight - Tuning.keepAwakeBarThickness - Tuning.keepAwakeBarGap
+                let barY = plot.minY + Tuning.keepAwakeBarThickness + Tuning.keepAwakeBarGap
                 for (offset, value) in trailing.enumerated() {
                     let slot = barCount - count + offset
                     let x = plot.minX + CGFloat(slot) * slotWidth
-                    let h = Self.quantizedTraceBarHeight(for: value)
-                    let barRect = NSRect(x: x, y: plot.minY, width: barWidth, height: h)
+                    let h = Self.quantizedTraceBarHeight(for: value, maxHeight: barMaxH)
+                    let barRect = NSRect(x: x, y: barY, width: barWidth, height: h)
                     NSBezierPath(roundedRect: barRect, xRadius: barRadius, yRadius: barRadius).fill()
                 }
             }
@@ -7835,6 +7860,12 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         bar.isHidden = true
         host.addSublayer(bar)
         keepAwakeBar = bar
+        
+        let gifLayer = CALayer()
+        gifLayer.contentsGravity = .resizeAspect
+        gifLayer.masksToBounds = true
+        host.addSublayer(gifLayer)
+        self.gifLayer = gifLayer
     }
 
     // Called on toggle, on suspend/resume via conditions, and whenever the item resizes (applySizing).
@@ -7848,14 +7879,21 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let hold = awakeHold
         let paused = keepAwakeArmedNotHolding
         bar.isHidden = !hold.isHeld && !paused
-        guard !bar.isHidden else { return }
+        
         // No implicit position/size animation — the bar should snap, not slide, on resize.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        let thickness = Tuning.keepAwakeBarThickness
-        bar.frame = CGRect(x: 0, y: 0, width: host.bounds.width, height: thickness)  // bottom edge
-        bar.backgroundColor = keepAwakeTintColor(
-            for: hold, paused: paused, appearance: statusItem.button?.effectiveAppearance)?.cgColor
+        if bar.isHidden {
+            bar.frame = CGRect.zero
+            gifLayer?.frame = host.bounds
+        } else {
+            let thickness = Tuning.keepAwakeBarThickness
+            let gap = Tuning.keepAwakeBarGap
+            bar.frame = CGRect(x: 0, y: 0, width: host.bounds.width, height: thickness)
+            gifLayer?.frame = CGRect(x: 0, y: thickness + gap, width: host.bounds.width, height: max(host.bounds.height - (thickness + gap), 0))
+            bar.backgroundColor = keepAwakeTintColor(
+                for: hold, paused: paused, appearance: statusItem.button?.effectiveAppearance)?.cgColor
+        }
         CATransaction.commit()
     }
 
@@ -8045,7 +8083,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // MARK: - Frames & sizing
 
     private func renderCurrentFrame() {
-        guard let layer = animationView?.layer, !renderedFrames.isEmpty, frameIndex < renderedFrames.count else { return }
+        guard let layer = gifLayer, !renderedFrames.isEmpty, frameIndex < renderedFrames.count else { return }
         // Cheap: hand CoreAnimation a pre-rasterized CGImage. No drawRect, no layout, no
         // constraint solve — the whole point of the layer-backed approach.
         layer.contents = renderedFrames[frameIndex]
