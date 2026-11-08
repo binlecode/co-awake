@@ -38,6 +38,12 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.9] - 2026-11-08
+
+### Fixed
+
+- **Compact UI**: Reduced Keep Awake bar thickness and vertical gap to 1pt each, increasing the vertical headroom for GIF/Trace/Value content while maintaining clear visual separation.
+
 ## [3.1.8] - 2026-11-08
 
 ### Fixed
