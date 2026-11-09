@@ -485,7 +485,7 @@ private enum Tuning {
     // Dimensions for the status-bar trace chart (sparkline) mode (--display trace).
     static let labelChartWidth: CGFloat = 45
     static let labelChartHeight: CGFloat = 14
-    static let labelChartImageHeight: CGFloat = 20
+    static let labelChartImageHeight: CGFloat = 18.5
     static let labelChartBarCount: Int = 12
     static let labelChartBarWidth: CGFloat = 2.6
     static let labelChartCountdownGap: CGFloat = 6.0

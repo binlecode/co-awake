@@ -38,6 +38,14 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.12] - 2026-11-08
+
+### Fixed
+
+- **Symmetric vertical centering for 1.5pt Keep Awake bar + 1.0pt gap (`labelChartImageHeight = 18.5`).**
+  Aligned the `.trace` and `.value` canvas height with the 1.5pt underline + 1.0pt gap + 14pt content
+  band (`1pt + 1.5pt + 1pt + 14pt + 1pt = 18.5pt`) so top and bottom status-bar margins match.
+
 ## [3.1.11] - 2026-11-08
 
 ### Fixed
