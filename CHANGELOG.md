@@ -38,6 +38,15 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.10] - 2026-11-08
+
+### Fixed
+
+- **Surface explicit Reduce Motion handoff status in the menu.** When macOS Reduce Motion is on and
+  `Runner GIF` is selected, the root menu now displays `↳ GIF paused — Reduce Motion is on (showing Live Value)`
+  and annotates `Settings ▸ Display Mode ▸ Runner GIF`, `Diagnostics ▸ Animation Speed`, and `About`
+  so the automatic handoff to `Live Value` is never silent.
+
 ## [3.1.9] - 2026-11-08
 
 ### Fixed

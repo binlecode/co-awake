@@ -719,8 +719,11 @@ private enum MenuTitle {
 
     // Menu-bar display modes.
     static let displayGifItem = "Runner GIF"
+    static let displayGifPausedReduceMotion = "Runner GIF (paused — Reduce Motion)"
     static let displayTraceItem = "Trace Chart"
     static let displayValueItem = "Live Value"
+    static let reduceMotionHandoffRow = "↳ GIF paused — Reduce Motion is on (showing Live Value)"
+    static let animationSpeedPausedReduceMotion = "paused (Reduce Motion)"
 
     static let startAtLogin = "Start at Login"
 
@@ -4442,6 +4445,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // Unified source list: each row represents a telemetry monitor with live readout.
     private var sourceMenuItems: [LoadSource: NSMenuItem] = [:]
     private var throttleStatusItem: NSMenuItem!
+    private var reduceMotionStatusItem: NSMenuItem!
     private var countdownLabel: NSTextField!
     // Signal source for remote runtime intent forwarding (SIGUSR1)
     private var signalSource: DispatchSourceSignal?
@@ -4803,6 +4807,11 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         throttleStatusItem.isEnabled = false
         throttleStatusItem.isHidden = true
         infoMenu.addItem(throttleStatusItem)
+
+        reduceMotionStatusItem = NSMenuItem(title: MenuTitle.reduceMotionHandoffRow, action: nil, keyEquivalent: "")
+        reduceMotionStatusItem.isEnabled = false
+        reduceMotionStatusItem.isHidden = true
+        infoMenu.addItem(reduceMotionStatusItem)
 
         // Read-only second level: sleep assertions, per-source splits, animation multiplier.
         infoMenu.addItem(NSMenuItem.separator())
@@ -5220,9 +5229,11 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             ? usageLineText(for: activeLoadSource)
             : "\(activeLoadSource.menuTitle) (warming up)"
         let speedSuffix = (displayMode == .gif)
-            ? (isAutoSpeed
-                ? String(format: " · %.2f× auto", speedMultiplier)
-                : String(format: " · %.2f× fixed", speedMultiplier))
+            ? (animationFreeze == .reduceMotion
+                ? " · paused (Reduce Motion, showing Live Value)"
+                : (isAutoSpeed
+                    ? String(format: " · %.2f× auto", speedMultiplier)
+                    : String(format: " · %.2f× fixed", speedMultiplier)))
             : ""
         let modeSummary = "Display: \(displayMode.menuTitle) · \(sourceLine)\(speedSuffix)\n\(awakeHold.rowText)"
         alert.informativeText = [
@@ -6147,9 +6158,12 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let isGif = (displayMode == .gif)
         let isTrace = (displayMode == .trace)
         let isValue = (displayMode == .value)
+        let isReduceMotion = (animationFreeze == .reduceMotion)
+        runnerGifDisplayItem?.title = isReduceMotion ? MenuTitle.displayGifPausedReduceMotion : MenuTitle.displayGifItem
         runnerGifDisplayItem?.state = isGif ? .on : .off
         traceChartPresetItem?.state = isTrace ? .on : .off
         liveValuePresetItem?.state = isValue ? .on : .off
+        reduceMotionStatusItem?.isHidden = !(isGif && isReduceMotion)
         let fileManager = FileManager.default
         for (item, preset) in zip(presetMenuItems, allPresets) {
             item.isEnabled = fileManager.fileExists(atPath: preset.path)
@@ -7111,10 +7125,10 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 item.isHidden = true
             }
         }
-        animationSpeedItem.title = MenuTitle.line(
-            MenuTitle.animationSpeed,
-            MenuTitle.animationSpeedValue(speedMultiplier, auto: isAutoSpeed)
-        )
+        let speedText = (animationFreeze == .reduceMotion)
+            ? MenuTitle.animationSpeedPausedReduceMotion
+            : MenuTitle.animationSpeedValue(speedMultiplier, auto: isAutoSpeed)
+        animationSpeedItem.title = MenuTitle.line(MenuTitle.animationSpeed, speedText)
     }
 
     // MARK: - Keep Awake
@@ -7619,6 +7633,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func freezeDidChange() {
         syncGameLoopRunning()
         updateDisplaySlot()                  // engage/release the label handoff (resizes the slot)
+        refreshPresetSelectionState()
         refreshSourceListState()
     }
 
