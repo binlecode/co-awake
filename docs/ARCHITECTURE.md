@@ -232,9 +232,9 @@ The application includes ten unprivileged telemetry monitors, owned by `Telemetr
 +------------------------+---------------------------+-----------------------+------------------------------------------+
 | CPULoadMonitor         | host_processor_info()     | Core tick deltas      | Direct percentage (0.0..1.0); P/E split  |
 | MemoryLoadMonitor      | host_statistics64()       | Pages, swapins/outs   | Direct RAM used fraction (0.0..1.0)      |
-| GPULoadMonitor         | IORegistry IOAccelerator  | Device utilization %  | Direct percentage (0.0..1.0); Rend/Tiler |
+| GPULoadMonitor         | IOReport + IOAccelerator  | GPUPH residency %     | Direct percentage (0.0..1.0); Rend/Tiler |
 | SMCClient (Fan)        | AppleSMCKeysEndpoint      | F{n}Ac / F{n}Mx RPM   | Fastest fan RPM / Max RPM (0.0..1.0)     |
-| SMCClient (Temp)       | AppleSMCKeysEndpoint      | Tpx* / Tp*a max °C    | Direct 0°C .. 100°C linear clamp         |
+| SMCClient (Temp)       | AppleSMCKeysEndpoint      | Tpx/Tex / Tp*a max °C | Direct 0°C .. 100°C linear clamp         |
 | NetworkLoadMonitor     | getifaddrs() (AF_LINK)    | Interface byte deltas | Stateless log10 scale (0.1..1000 MiB/s)  |
 | DiskLoadMonitor        | IOBlockStorageDriver      | Drive byte deltas     | Stateless log10 scale (1..10000 MiB/s)   |
 | BatteryLoadMonitor     | IOKit Power Sources       | Charge %, Discharge A | Direct charge fraction (0.0..1.0)        |
@@ -315,8 +315,8 @@ the `Diagnostics ▸` CPU row is hidden and the snapshot keys are absent. The wh
                           +---------------------------+
 ```
 
-- **Binary Search Key Table Discovery:** Instead of sequential table scans (~600ms) or guesswork, `SMCClient.floatKeys(withPrefix:)` uses binary search across the ascending SMC key table (~20ms), discovering dynamic fan (`F{n}Ac`) and temperature (`Tp**`) keys across Intel and Apple Silicon chips.
-- **Die Temperature Mapping:** Reads hottest cluster/core sensors (`Tpx*` cluster maxima on M4+, falling back to `Tp*a` per-core sensors on M1–M3 and excluding synthetic `*z`/`*b` offset keys). Mapped linearly across $0^\circ\text{C} \dots 100^\circ\text{C}$ (`Tuning.temperatureCeilingCelsius`):
+- **Binary Search Key Table Discovery:** Instead of sequential table scans (~600ms) or guesswork, `SMCClient.floatKeys(withPrefix:)` uses binary search across the ascending SMC key table (~20ms), discovering dynamic fan (`F{n}Ac`) and temperature (`Tp**` / `Te**`) keys across Intel and Apple Silicon chips.
+- **Die Temperature Mapping:** Reads hottest live cluster/core sensors (even-indexed `Tpx*` / `Tex*` live cluster maxima on M4+, excluding odd-indexed peak-hold registers `Tpx1/3/5/9/B/D` and `Tex1/3`; falling back to `Tp*a` / `Te*a` per-core sensors on M1–M3 and excluding synthetic `*x`/`*z`/`*b` offset keys). Mapped linearly across $0^\circ\text{C} \dots 100^\circ\text{C}$ (`Tuning.temperatureCeilingCelsius`):
   $$\text{loadFraction} = \text{clamp}\left(\frac{T_{\text{max}}}{100.0}, 0.0, 1.0\right)$$
 
 ### 4.4 Stateless Logarithmic Scaling (`Tuning.logScale`)
@@ -566,14 +566,19 @@ says so where it stops.
 
 ### 4.9 GPU Utilization & the Pipeline Split (`GPULoadMonitor`)
 
-`PerformanceStatistics` is copied from the IORegistry entry matching provider class `IOAccelerator`,
-falling back to `AGXAccelerator` — the `IOClass` itself is hardware-specific (`AGXAcceleratorG16X` on
-this chip) and is never matched on. Three figures are read from the one dictionary already in hand,
-at no additional syscall:
+On Apple Silicon, primary GPU utilization is measured over the sampling window via `IOReport` (group
+`GPU Stats`, subgroup `GPU Performance States`, channel `GPUPH`), computing the active residency
+fraction across all non-idle P-states (`state` $\notin$ `{"OFF", "IDLE", "DOWN"}`). This avoids the
+sub-millisecond point-read spikes of `IOAccelerator`'s `Device Utilization %` and matches `btop` and
+`powermetrics`.
 
-| Key | Row clause | Meaning |
+`PerformanceStatistics` is also copied from the IORegistry entry matching provider class `IOAccelerator`
+(falling back to `AGXAccelerator`) to supply the Renderer/Tiler pipeline split, and serves as the
+primary device utilization fallback on hardware without `GPUPH` (e.g. Intel Macs):
+
+| Source / Key | Row clause | Meaning |
 |---|---|---|
-| `Device Utilization %` | the GPU figure itself | drives the animation when GPU is the source |
+| `IOReport` `GPUPH` (fallback: `Device Utilization %`) | the GPU figure itself | drives the animation when GPU is the source |
 | `Renderer Utilization %` | `· Renderer 46%` | shading and compute work |
 | `Tiler Utilization %` | `· Tiler 19%` | the geometry/binning stage a tile-based GPU runs ahead of it |
 
@@ -583,8 +588,6 @@ at no additional syscall:
   describe one accelerator's pipeline, and mixing two GPUs' halves would describe neither.
 - **A missing half is an absent reading, not a zero.** The row clause is dropped and the snapshot keys
   are absent; a `0` here is a real reading and means that half of the pipeline was idle.
-- These are driver point reads, not interval integrations — the same character as the device figure
-  beside them.
 
 ### 4.10 Telemetry Scope & Negative Space
 

@@ -38,6 +38,15 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.13] - 2026-11-08
+
+### Fixed
+
+- **Align CPU/bandwidth baseline priming, M4 die-temperature sensors, and GPU residency with live system load.**
+  - `CPULoadMonitor` and `BandwidthLoadMonitor` now honor `elapsed == nil` baseline priming (`primeInactiveSources()`, `setLoadSource()`, launch), resetting tick and `IOReport` baselines instead of differencing across dormant gaps when switching sources or opening the menu.
+  - `TemperatureLoadMonitor` now scans both `Tp*` (P-core) and `Te*` (E-core) SMC sensor families and selects even-indexed live cluster sensors (`Tpx0/2/4/8/A/C`, `Tex0/2`) on M4+, excluding odd-indexed peak-hold registers (`Tpx1/3/5/9/B/D`, `Tex1/3`) that stayed pinned at 75–84 °C at idle.
+  - `GPULoadMonitor` now measures active GPU residency over the sampling window via `IOReport` (`GPU Stats` / `GPU Performance States` / `GPUPH`), retaining `IOAccelerator` for the `Renderer`/`Tiler` pipeline split and hardware fallback.
+
 ## [3.1.12] - 2026-11-08
 
 ### Fixed

@@ -2057,8 +2057,12 @@ private final class CPULoadMonitor {
         var idle: UInt64
     }
 
-    func sampleUsage() -> Double? {
-        guard let usage = readUsage() else { return nil }
+    func sampleUsage(elapsed: Double?) -> Double? {
+        guard let usage = readUsage(elapsed: elapsed) else {
+            currentUtilization = 0
+            hasSample = false
+            return nil
+        }
         currentUtilization = usage
         hasSample = true
         return usage
@@ -2081,11 +2085,15 @@ private final class CPULoadMonitor {
     // against P 68.6% / E 28.9%. Within a couple of points, for no syscall at all — which is why this
     // reads the array already in hand rather than opening a second IOReport subscription on the
     // default source's every tick.
-    private func sampleClusters(_ perCPU: [CPUTicks]) {
+    private func sampleClusters(_ perCPU: [CPUTicks], elapsed: Double?) {
         guard !clusterIndices.performance.isEmpty || !clusterIndices.efficiency.isEmpty else { return }
         let previous = lastClusterTicks
         lastClusterTicks = Dictionary(uniqueKeysWithValues: perCPU.enumerated().map { ($0.offset, $0.element) })
-        guard !previous.isEmpty else { return }
+        guard let elapsed, elapsed > 0, !previous.isEmpty else {
+            performanceUsage = nil
+            efficiencyUsage = nil
+            return
+        }
 
         func busy(_ indices: [Int]) -> Double? {
             var total: UInt64 = 0
@@ -2145,7 +2153,7 @@ private final class CPULoadMonitor {
         return (performance.sorted(), efficiency.sorted())
     }
 
-    private func readUsage() -> Double? {
+    private func readUsage(elapsed: Double?) -> Double? {
         var cpuCount: natural_t = 0
         var cpuInfo: processor_info_array_t?
         var cpuInfoCount: mach_msg_type_number_t = 0
@@ -2183,14 +2191,14 @@ private final class CPULoadMonitor {
         }
         // Before the whole-machine guard below: the split keeps its own baseline, and must warm up on
         // the same tick rather than one later.
-        sampleClusters(perCPU)
+        sampleClusters(perCPU, elapsed: elapsed)
 
         defer {
             lastTotalTicks = totalTicks
             lastIdleTicks = idleTicks
         }
 
-        guard let prevTotal = lastTotalTicks, let prevIdle = lastIdleTicks else {
+        guard let elapsed, elapsed > 0, let prevTotal = lastTotalTicks, let prevIdle = lastIdleTicks else {
             return nil
         }
 
@@ -2301,11 +2309,11 @@ private final class MemoryLoadMonitor {
     }
 }
 
-// GPU utilization via unprivileged IORegistry. IOAccelerator's PerformanceStatistics dictionary
-// exposes "Device Utilization %" (0…100), an instantaneous point read valid on the first tick — no
-// counter-delta, no EMA. Natively 0…1 after /100. GPU *power/energy* would need the private IOReport
-// dance; utilization does not. `nil` (never a fabricated 0) when no accelerator matches or the key is
-// absent → the source disables.
+// GPU utilization via unprivileged IOReport residency ("GPU Stats" / "GPU Performance States" / "GPUPH")
+// on Apple Silicon, with IOAccelerator's PerformanceStatistics dictionary providing the Renderer/Tiler
+// pipeline split and serving as the primary device fallback on hardware without GPUPH (e.g. Intel Macs).
+// Using GPUPH residency deltas over the sampling window avoids the instantaneous sub-millisecond spikes
+// of IOAccelerator's "Device Utilization %" point register, matching btop / powermetrics.
 @MainActor
 private final class GPULoadMonitor {
     private(set) var currentUtilization: Double = 0
@@ -2319,6 +2327,14 @@ private final class GPULoadMonitor {
     // Availability probed once and cached: a machine with no readable accelerator disables the source.
     private var availabilityChecked = false
     private var available = false
+    private var probedSubscription = false
+    private var subscription: IOReportSubscription?
+    private var previousSample: CFDictionary?
+
+    private static let group = "GPU Stats"
+    private static let subgroup = "GPU Performance States"
+    private static let channelName = "GPUPH"
+    private static let idleStates: Set<String> = ["OFF", "IDLE", "DOWN"]
 
     private struct Reading {
         var device: Double
@@ -2328,13 +2344,32 @@ private final class GPULoadMonitor {
 
     var isAvailable: Bool {
         if !availabilityChecked {
-            available = (readUtilization() != nil)
+            available = (readUtilization() != nil || ensureSubscribed() != nil)
             availabilityChecked = true
         }
         return available
     }
 
-    func sampleUsage() -> Double? {
+    func sampleUsage(elapsed: Double?) -> Double? {
+        if let subscription = ensureSubscribed(), let sample = subscription.sample() {
+            defer { previousSample = sample }
+            guard let elapsed, elapsed > 0, let previous = previousSample,
+                  let delta = subscription.delta(from: previous, to: sample),
+                  let activeFraction = Self.activeFraction(in: delta, client: subscription.client) else {
+                currentUtilization = 0
+                currentRendererUtilization = nil
+                currentTilerUtilization = nil
+                hasSample = false
+                return nil
+            }
+            let accel = readUtilization()
+            currentUtilization = activeFraction
+            currentRendererUtilization = accel?.renderer
+            currentTilerUtilization = accel?.tiler
+            hasSample = true
+            return activeFraction
+        }
+
         guard let reading = readUtilization() else {
             hasSample = false
             return nil
@@ -2344,6 +2379,34 @@ private final class GPULoadMonitor {
         currentTilerUtilization = reading.tiler
         hasSample = true
         return reading.device
+    }
+
+    private func ensureSubscribed() -> IOReportSubscription? {
+        if !probedSubscription {
+            probedSubscription = true
+            subscription = IOReportClient.shared?.subscribe(group: Self.group, subgroup: Self.subgroup) {
+                $0 == Self.channelName
+            }
+        }
+        return subscription
+    }
+
+    private static func activeFraction(in delta: CFDictionary, client: IOReportClient) -> Double? {
+        guard let rows = client.rows(in: delta) else { return nil }
+        for row in rows where client.name(of: row) == channelName {
+            var active: Int64 = 0
+            var total: Int64 = 0
+            for (state, ticks) in client.residencies(of: row) where ticks >= 0 {
+                let normalized = state.trimmingCharacters(in: .whitespaces).uppercased()
+                total &+= ticks
+                if !idleStates.contains(normalized) {
+                    active &+= ticks
+                }
+            }
+            guard total > 0 else { return nil }
+            return min(max(Double(active) / Double(total), 0), 1)
+        }
+        return nil
     }
 
     // Max "Device Utilization %" across matched accelerators. The IOClass is HW-specific
@@ -2714,11 +2777,14 @@ private final class FanLoadMonitor {
 //      the plausible range and read hottest — so any key added here earns its place by MOVING under
 //      load, not by reading a sane number once.
 //
-//   3. Tpx* (M4+ per-cluster maxima) or Tp*a (M1–M3 per-core raw sensors) preferred over the full
-//      Tp** family, for both cost and accuracy. On M4 Max, max(Tpx*) equalled max over all 102 Tp** keys
-//      in 22 of 22 samples, at 2.3 ms a tick against 20 ms. On M1, each core publishes a quartet
-//      (Tp<N>a raw, Tp<N>x peak-hold, Tp<N>b +9 °C bias, Tp<N>z +17 °C trip-offset); selecting Tp*a
-//      (and excluding *z/*b on the final fallback) avoids the synthetic offsets and reads 7 keys instead of 28.
+//   3. Even-indexed Tpx* (M4+ live per-cluster maxima) or Tp*a (M1–M3 per-core raw sensors) preferred
+//      over the full Tp** family, for both cost and accuracy. On M4 Max, each cluster publishes a pair
+//      of Tpx<N> keys: even hex indices (Tpx0/2/4/8/A/C) are live cluster temperatures (~47 °C at idle),
+//      while odd hex indices (Tpx1/3/5/9/B/D) are slow-decay peak-hold registers that match the 3rd
+//      column of per-core triplets (Tp1o/Tp23/Tp29, staying at 75–84 °C long after a brief burst).
+//      On M1, each core publishes a quartet (Tp<N>a raw, Tp<N>x peak-hold, Tp<N>b +9 °C bias,
+//      Tp<N>z +17 °C trip-offset); selecting Tp*a (and excluding *x/*z/*b on the final fallback)
+//      avoids the synthetic offsets and reads 7 keys instead of 28.
 //
 // Normalization maps 0…temperatureCeilingCelsius (100 °C) linearly to 0…1. No readable sensor →
 // isAvailable false → disabled menu row and a launch fallback to CPU, exactly like fan on a fanless
@@ -2784,10 +2850,17 @@ private final class TemperatureLoadMonitor {
             available = false
             return false
         }
-        let family = smc.floatKeys(withPrefix: "Tp")
-        let tpxMaxima = family.filter { $0.name.hasPrefix("Tpx") }
-        let coreSensors = tpxMaxima.isEmpty ? family.filter { $0.name.hasSuffix("a") } : tpxMaxima
-        sensorKeys = coreSensors.isEmpty ? family.filter { !$0.name.hasSuffix("z") && !$0.name.hasSuffix("b") } : coreSensors
+        let family = smc.floatKeys(withPrefix: "Tp") + smc.floatKeys(withPrefix: "Te")
+        let clusterMaxima = family.filter { $0.name.hasPrefix("Tpx") || $0.name.hasPrefix("Tex") }
+        let clusterLive = clusterMaxima.filter {
+            guard let last = $0.name.last, let hex = Int(String(last), radix: 16) else { return false }
+            return hex.isMultiple(of: 2)
+        }
+        let clusterSensors = clusterLive.isEmpty ? clusterMaxima : clusterLive
+        let coreSensors = clusterSensors.isEmpty ? family.filter { $0.name.hasSuffix("a") } : clusterSensors
+        sensorKeys = coreSensors.isEmpty
+            ? family.filter { !$0.name.hasSuffix("z") && !$0.name.hasSuffix("b") && !$0.name.hasSuffix("x") }
+            : coreSensors
         available = !sensorKeys.isEmpty
         return available
     }
@@ -3503,13 +3576,13 @@ private final class BandwidthLoadMonitor {
 
     var isAvailable: Bool { ensureSubscribed() != nil }
 
-    func sampleUsage() -> Double? {
+    func sampleUsage(elapsed: Double?) -> Double? {
         guard let subscription = ensureSubscribed(), let sample = subscription.sample() else {
             hasSample = false
             return nil
         }
         defer { previousSample = sample }
-        guard let previous = previousSample,
+        guard let elapsed, elapsed > 0, let previous = previousSample,
               let delta = subscription.delta(from: previous, to: sample),
               let gigabytesPerSec = Self.gigabytesPerSec(in: delta, client: subscription.client) else {
             currentGigabytesPerSec = 0
@@ -3698,18 +3771,16 @@ private final class TelemetryCore {
     // for the fraction, so a menu row and a snapshot field can never disagree.
     func sampleSource(_ source: LoadSource, elapsed: Double?) -> Double? {
         switch source {
-        case .cpu: return loadMonitor.sampleUsage()
+        case .cpu: return loadMonitor.sampleUsage(elapsed: elapsed)
         case .memory: return memoryMonitor.sampleUsage(elapsed: elapsed)
-        case .gpu: return gpuMonitor.sampleUsage()
+        case .gpu: return gpuMonitor.sampleUsage(elapsed: elapsed)
         case .network: return networkMonitor.sampleUsage(elapsed: elapsed)
         case .disk: return diskMonitor.sampleUsage(elapsed: elapsed)
         case .fan: return fanMonitor.sampleUsage()
         case .battery: return batteryMonitor.sampleUsage()
         case .temperature: return temperatureMonitor.sampleUsage()
         case .ane: return aneMonitor.sampleUsage(elapsed: elapsed)
-        // No `elapsed`: the bus reading is a residency-weighted rate, already GB/s, so it needs two
-        // samples but not the gap between them.
-        case .bandwidth: return bandwidthMonitor.sampleUsage()
+        case .bandwidth: return bandwidthMonitor.sampleUsage(elapsed: elapsed)
         }
     }
 
@@ -5674,6 +5745,18 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     private func startLoadMonitoring() {
         loadTimer?.invalidate()
+        // Prime the active source's baseline (or record its initial point read) at launch so the
+        // first 2s timer tick already has a valid `elapsed` window rather than waiting until 4s.
+        if let seed = sampleActiveSource(elapsed: nil) {
+            recordLoadSample(seed)
+            if isAutoSpeed {
+                speedMultiplier = speedMultiplier(forUsage: seed)
+            }
+        }
+        if showAllSources {
+            primeInactiveSources()
+        }
+        lastSampleUptime = ProcessInfo.processInfo.systemUptime
         let timer = Timer(
             timeInterval: Tuning.loadSampleInterval,
             target: self,
@@ -7067,7 +7150,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         if let seed = sampleActiveSource(elapsed: nil) {
             recordLoadSample(seed)
         }
-        lastSampleUptime = nil
+        lastSampleUptime = ProcessInfo.processInfo.systemUptime
         reevaluateSpeedForCurrentConditions()
         applySizing()
         refreshSourceListState()
@@ -7087,9 +7170,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     // Store fresh counter baselines for readers that haven't been sampled while inactive, so their
     // first real delta once show-all begins is measured over a single tick, not the whole dormant gap.
-    // elapsed=nil → each counter-delta reader just stores its baseline and reports no rate (it warms up
-    // on the next 2s tick); instantaneous readers (cpu/gpu/fan/battery) are point reads, so this is a
-    // harmless refresh for them.
+    // elapsed=nil → each delta reader (cpu/gpu/network/disk/ane/bandwidth) stores its baseline and
+    // warms up on the next 2s tick; instantaneous readers (memory/fan/battery/temperature) are point
+    // reads, so this refreshes them immediately.
     private func primeInactiveSources() {
         for source in LoadSource.allCases where source != activeLoadSource && telemetry.isSourceAvailable(source) {
             _ = telemetry.sampleSource(source, elapsed: nil)
