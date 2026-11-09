@@ -38,6 +38,12 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.11] - 2026-11-08
+
+### Fixed
+
+- **UI Refinement**: Adjusted Keep Awake bar thickness to 1.5pt and vertical gap to 1pt for a more refined visual balance.
+
 ## [3.1.10] - 2026-11-08
 
 ### Fixed
