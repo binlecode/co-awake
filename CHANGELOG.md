@@ -38,6 +38,18 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-11-10
+
+### Changed
+
+- **Auto-match Keep Awake bar tint to monochrome themes; scope `Indicator Bar Tint` to colored GIFs.**
+  - In monochrome display states (`Trace Chart`, `Live Value`, Reduce Motion handoff, and monochrome `*-white` / `*-black` GIF presets), the Keep Awake bottom bar automatically uses the appearance-matched monochrome tone (`traceChartMonoDark` / `traceChartMonoLight`) across all three hold levels (own / foreign / paused), and `Settings ▸ Indicator Bar Tint` is hidden.
+  - When a full-color GIF preset (`Chihiro`, `Totoro`, or custom colored `.gif`) is active in `Runner GIF` mode, `Settings ▸ Indicator Bar Tint` is shown and applies the selected palette hue.
+- **Streamline `Diagnostics` submenu (KISS deduplication).**
+  - Hide `Animation Speed` and its separator whenever `Runner GIF` is not actively animating (`Trace Chart`, `Live Value`, or paused under Reduce Motion where the root menu already surfaces the handoff).
+  - Remove the redundant `Other Assertions` header and `none` placeholder row; format active foreign assertions concisely as `<owner> (display / idle ×N)` instead of repeating raw IOKit type strings on every row.
+  - Hide the `Fan` split row when all fans are at `0 RPM` or on single-fan machines (already shown on the root `Fan:` row), and format multi-fan active readings as `Fan: #1 … · #2 …`; drop the stale `P-cores` prefix from `Temperature` and omit the range when all sensors round to the same temperature as the root row.
+
 ## [3.1.14] - 2026-11-10
 
 ### Fixed

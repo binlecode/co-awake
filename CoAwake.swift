@@ -816,8 +816,24 @@ private enum MenuTitle {
     // relative to the per-type rows this replaced — "which types, and how many of each" still reads off
     // the row exactly.
     static func otherAssertionRow(owner: String, types: [(type: String, count: Int)]) -> String {
-        let parts = types.map { $0.count > 1 ? "\($0.type) ×\($0.count)" : $0.type }
-        return "\(owner) — \(parts.joined(separator: ", "))"
+        var displayCount = 0
+        var idleCount = 0
+        for entry in types {
+            if Tuning.assertionDisplaySleepTypes.contains(entry.type) {
+                displayCount += entry.count
+            } else {
+                idleCount += entry.count
+            }
+        }
+        var parts: [String] = []
+        if displayCount > 0 {
+            parts.append(displayCount > 1 ? "display ×\(displayCount)" : "display")
+        }
+        if idleCount > 0 {
+            parts.append(idleCount > 1 ? "idle ×\(idleCount)" : "idle")
+        }
+        let summary = parts.joined(separator: ", ")
+        return summary.isEmpty ? owner : "\(owner) (\(summary))"
     }
     static func otherAssertionsMore(_ count: Int) -> String { "…and \(count) more" }
 
@@ -4525,6 +4541,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var traceChartPresetItem: NSMenuItem!
     private var liveValuePresetItem: NSMenuItem!
     // Keep Awake tint submenu items
+    private var keepAwakeTintMenuItem: NSMenuItem!
     private var keepAwakeTintItems: [NSMenuItem] = []
     // "Battery Release Threshold ▸" submenu: Keep Awake's battery release threshold.
     private var batteryThresholdMenuItem: NSMenuItem!
@@ -4678,7 +4695,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private var otherAssertionsMoreItem: NSMenuItem!
     // Diagnostics ▸ rows, pre-created once and driven by title/isHidden: one split row per source
     // (hidden whenever breakdownText(for:) has nothing valid) and the animation-multiplier row.
+    private var diagnosticsSplitSeparatorItem: NSMenuItem!
     private var diagnosticItems: [LoadSource: NSMenuItem] = [:]
+    private var animationSpeedSeparatorItem: NSMenuItem!
     private var animationSpeedItem: NSMenuItem!
     private let assertionMonitor = SleepAssertionMonitor()
     // The armed window, kept alongside the deadline because remaining time alone can't say which row
@@ -5130,9 +5149,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         machineAwakeItem.isEnabled = false
         items.append(machineAwakeItem)
 
-        let assertionsHeaderItem = NSMenuItem(title: MenuTitle.otherAssertions, action: nil, keyEquivalent: "")
-        assertionsHeaderItem.isEnabled = false
-        items.append(assertionsHeaderItem)
         for _ in 0..<Tuning.assertionRowCap {
             let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             item.isEnabled = false
@@ -5157,7 +5173,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let submenu = NSMenu(title: MenuTitle.diagnostics)
         makeSleepAssertionItems().forEach(submenu.addItem)
 
-        submenu.addItem(NSMenuItem.separator())
+        diagnosticsSplitSeparatorItem = NSMenuItem.separator()
+        submenu.addItem(diagnosticsSplitSeparatorItem)
         for source in LoadSource.allCases {
             let item = NSMenuItem(title: source.menuTitle, action: nil, keyEquivalent: "")
             item.isEnabled = false
@@ -5166,7 +5183,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             diagnosticItems[source] = item
         }
 
-        submenu.addItem(NSMenuItem.separator())
+        animationSpeedSeparatorItem = NSMenuItem.separator()
+        submenu.addItem(animationSpeedSeparatorItem)
         animationSpeedItem = NSMenuItem(title: MenuTitle.line(MenuTitle.animationSpeed, MenuTitle.placeholderValue), action: nil, keyEquivalent: "")
         animationSpeedItem.isEnabled = false
         submenu.addItem(animationSpeedItem)
@@ -5205,6 +5223,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             keepAwakeTintItems.append(item)
         }
         parentItem.submenu = submenu
+        keepAwakeTintMenuItem = parentItem
         return parentItem
     }
 
@@ -6187,18 +6206,23 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             }
         case .temperature:
             // The spread the hottest sensor was taken from, and how many answered — deliberately not
-            // one segment per sensor (12 clusters here, up to 102 on the full-family fallback). The
-            // range is what shows the max isn't a lone outlier.
+            // one segment per sensor. Only shown when multiple sensors report; if all round to the
+            // same °C, omit the range so it doesn't repeat the root row's temperature.
             let values = telemetry.temperatureMonitor.perSensor.map(\.celsius)
-            if let coolest = values.min(), let hottest = values.max() {
-                clauses.append(String(format: "P-cores %.0f–%.0f °C", coolest, hottest))
-                clauses.append("\(values.count) sensor\(values.count == 1 ? "" : "s")")
-            } else {
-                clauses.append("every core cluster parked")
+            if values.count > 1, let coolest = values.min(), let hottest = values.max() {
+                let low = Int(coolest.rounded())
+                let high = Int(hottest.rounded())
+                if low != high {
+                    clauses.append("\(low)–\(high) °C")
+                }
+                clauses.append("\(values.count) sensors")
             }
         case .fan:
-            for (index, reading) in telemetry.fanMonitor.perFan.enumerated() {
-                clauses.append(String(format: "Fan %d %.0f RPM (%.0f%%)", index + 1, reading.rpm, reading.utilization * Tuning.percentScale))
+            let fans = telemetry.fanMonitor.perFan
+            if fans.count > 1, fans.contains(where: { $0.rpm >= 1 }) {
+                for (index, reading) in fans.enumerated() {
+                    clauses.append(String(format: "#%d %.0f RPM (%.0f%%)", index + 1, reading.rpm, reading.utilization * Tuning.percentScale))
+                }
             }
         case .battery:
             if telemetry.batteryMonitor.onBattery {
@@ -6251,6 +6275,16 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         for (item, preset) in zip(presetMenuItems, allPresets) {
             item.isEnabled = fileManager.fileExists(atPath: preset.path)
             item.state = (isGif && activePreset?.key == preset.key) ? .on : .off
+        }
+        refreshKeepAwakeTintMenuState()
+    }
+
+    private func refreshKeepAwakeTintMenuState() {
+        let canChooseTint = usesColorBarTint
+        keepAwakeTintMenuItem?.isHidden = !canChooseTint
+        for item in keepAwakeTintItems {
+            item.isEnabled = canChooseTint
+            item.state = (canChooseTint && item.tag == activeKeepAwakeColor.rawValue) ? .on : .off
         }
     }
 
@@ -6344,9 +6378,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 
     private func refreshKeepAwakeSelectionState() {
         let enabled = sleepPreventer.isEnabled
-        for item in keepAwakeTintItems {
-            item.state = (item.tag == activeKeepAwakeColor.rawValue) ? .on : .off
-        }
+        refreshKeepAwakeTintMenuState()
 
         // Window group. When Keep Awake is off no row is marked. When enabled, exactly one row holds
         // the mark:
@@ -6463,9 +6495,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     private func refreshOtherAssertionRows() {
         let holders = assertionMonitor.holders
         if holders.isEmpty {
-            otherAssertionRowItems[0].title = MenuTitle.otherAssertionsNone
-            otherAssertionRowItems[0].isHidden = false
-            for item in otherAssertionRowItems.dropFirst() { item.isHidden = true }
+            for item in otherAssertionRowItems { item.isHidden = true }
             otherAssertionsMoreItem.isHidden = true
             return
         }
@@ -6824,7 +6854,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
                 totalWidthHalfPt: Int((totalW * 2.0).rounded()),
                 isDark: appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
                 tintTone: keepAwakeTint(for: awakeHold, paused: keepAwakeArmedNotHolding)?.rawValue ?? "none",
-                activeColorRaw: activeKeepAwakeColor.rawValue
+                activeColorRaw: usesColorBarTint ? activeKeepAwakeColor.rawValue : -1
             )
             if button.image == nil || sig != lastValueRenderSignature {
                 lastValueRenderSignature = sig
@@ -6881,7 +6911,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             isEmpty: loadHistory.isEmpty,
             isDark: isDark,
             tintTone: keepAwakeTint(for: hold, paused: paused)?.rawValue ?? "none",
-            activeColorRaw: activeKeepAwakeColor.rawValue,
+            activeColorRaw: usesColorBarTint ? activeKeepAwakeColor.rawValue : -1,
             countdown: countdown,
             totalWidthHalfPt: Int((totalWidth * 2.0).rounded())
         )
@@ -6902,7 +6932,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         let bandY = underlineY + Tuning.keepAwakeBarThickness + Tuning.keepAwakeBarGap
         let attrs: [NSAttributedString.Key: Any] = [
             .font: Self.labelFont,
-            .foregroundColor: tintColor ?? NSColor.labelColor,
+            .foregroundColor: NSColor.labelColor,
         ]
         let img = NSImage(size: NSSize(width: totalW, height: imageHeight), flipped: false) { _ in
             if let tint = tintColor {
@@ -7200,18 +7230,24 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // (a root row reading "warming up..." beside a split still showing). Visibility is breakdownText's
     // call alone — nil hides the row.
     private func refreshDiagnosticsState() {
+        var hasVisibleSplit = false
         for (source, item) in diagnosticItems {
             if let text = breakdownText(for: source) {
                 item.title = MenuTitle.line(source.menuTitle, text)
                 item.isHidden = false
+                hasVisibleSplit = true
             } else {
                 item.isHidden = true
             }
         }
-        let speedText = (animationFreeze == .reduceMotion)
-            ? MenuTitle.animationSpeedPausedReduceMotion
-            : MenuTitle.animationSpeedValue(speedMultiplier, auto: isAutoSpeed)
-        animationSpeedItem.title = MenuTitle.line(MenuTitle.animationSpeed, speedText)
+        diagnosticsSplitSeparatorItem?.isHidden = !hasVisibleSplit
+        let showSpeed = (effectiveDisplayMode == .gif)
+        animationSpeedSeparatorItem?.isHidden = !showSpeed
+        animationSpeedItem.isHidden = !showSpeed
+        if showSpeed {
+            let speedText = MenuTitle.animationSpeedValue(speedMultiplier, auto: isAutoSpeed)
+            animationSpeedItem.title = MenuTitle.line(MenuTitle.animationSpeed, speedText)
+        }
     }
 
     // MARK: - Keep Awake
@@ -8049,11 +8085,30 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // `appearance` is the CALLER's button, not a shared one: the tint has per-appearance tones, and while
     // two adjacent status items will practically always resolve the same appearance, resolving each
     // against its own is free and removes the assumption.
+    private var isMonochromeGif: Bool {
+        if let key = activePreset?.key {
+            return key.hasSuffix("-white") || key.hasSuffix("-black")
+        }
+        let base = (activeGifPath as NSString).deletingPathExtension.lowercased()
+        return base.hasSuffix("-white") || base.hasSuffix("-black")
+    }
+
+    private var usesColorBarTint: Bool {
+        effectiveDisplayMode == .gif && !isMonochromeGif
+    }
+
     private func keepAwakeTintColor(
         for hold: AwakeHold, paused: Bool, appearance: NSAppearance?
     ) -> NSColor? {
         guard let tint = keepAwakeTint(for: hold, paused: paused) else { return nil }
-        return activeKeepAwakeColor.color(for: appearance).withAlphaComponent(tint.alpha)
+        let baseColor: NSColor
+        if usesColorBarTint {
+            baseColor = activeKeepAwakeColor.color(for: appearance)
+        } else {
+            let isDark = appearance?.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            baseColor = isDark ? Tuning.traceChartMonoDark : Tuning.traceChartMonoLight
+        }
+        return baseColor.withAlphaComponent(tint.alpha)
     }
 
     // Which tone applies. Split out from the colour so the LOG_AWAKE hook can NAME the rendered tone
