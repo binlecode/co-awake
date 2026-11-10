@@ -485,7 +485,7 @@ private enum Tuning {
     // Dimensions for the status-bar trace chart (sparkline) mode (--display trace).
     static let labelChartWidth: CGFloat = 45
     static let labelChartHeight: CGFloat = 14
-    static let labelChartImageHeight: CGFloat = 18.5
+    static let labelChartImageHeight: CGFloat = 19.0
     static let labelChartBarCount: Int = 12
     static let labelChartBarWidth: CGFloat = 2.6
     static let labelChartCountdownGap: CGFloat = 6.0
@@ -608,7 +608,7 @@ private enum Tuning {
     static let keepAwakeBarMauveLight = NSColor(srgbRed: 0.494, green: 0.443, blue: 0.569, alpha: 1) // #7E7191
     static let keepAwakeBarSageDark = NSColor(srgbRed: 0.576, green: 0.710, blue: 0.514, alpha: 1) // #93B583
     static let keepAwakeBarSageLight = NSColor(srgbRed: 0.392, green: 0.522, blue: 0.353, alpha: 1) // #64855A
-    static let keepAwakeBarThickness: CGFloat = 1.5
+    static let keepAwakeBarThickness: CGFloat = 2.0
     static let keepAwakeBarGap: CGFloat = 1.0
 
     // Status bar trace-chart monochrome colors (calibrated for dark/light appearance).

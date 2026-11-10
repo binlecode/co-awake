@@ -38,6 +38,15 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.1.14] - 2026-11-10
+
+### Fixed
+
+- **Increase Keep Awake bottom bar thickness to 2.0pt with symmetric 19.0pt canvas (`labelChartImageHeight = 19.0`).**
+  Updated `Tuning.keepAwakeBarThickness` from `1.5` to `2.0` and aligned `Tuning.labelChartImageHeight`
+  from `18.5` to `19.0` (`1pt + 2pt + 1pt + 14pt + 1pt = 19pt`), preserving 1pt top/bottom margins and
+  strict Retina 2x pixel alignment without altering other layout settings.
+
 ## [3.1.13] - 2026-11-08
 
 ### Fixed
