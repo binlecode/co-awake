@@ -167,9 +167,9 @@ else
 fi
 out=$(./awake --help 2>&1); rc=$?
 if [ -x ./CoAwake ]; then
-  { [ "$rc" = 0 ] && echo "$out" | grep -q "^Usage:"; } && { echo "  PASS launcher --help is the binary's"; pass=$((pass+1)); } || { echo "  FAIL launcher --help (rc=$rc)"; fail=$((fail+1)); }
+  { [ "$rc" = 0 ] && grep -q "^Usage:" <<< "$out"; } && { echo "  PASS launcher --help is the binary's"; pass=$((pass+1)); } || { echo "  FAIL launcher --help (rc=$rc)"; fail=$((fail+1)); }
 else
-  { [ "$rc" = 2 ] && echo "$out" | grep -q "build"; } && { echo "  PASS launcher --help with no binary exits 2 naming build"; pass=$((pass+1)); } || { echo "  FAIL launcher --help with no binary (rc=$rc: $out)"; fail=$((fail+1)); }
+  { [ "$rc" = 2 ] && grep -q "build" <<< "$out"; } && { echo "  PASS launcher --help with no binary exits 2 naming build"; pass=$((pass+1)); } || { echo "  FAIL launcher --help with no binary (rc=$rc: $out)"; fail=$((fail+1)); }
 fi
 # Version consistency. AppInfo.version is the source of truth; every *in-repo* surface that names the
 # version must agree with it, or a release ships a stale one silently. The git

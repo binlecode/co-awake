@@ -38,6 +38,14 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-11-10
+
+### Changed
+
+- **Remove `Diagnostics` root menu entry; move sleep assertions into `Keep Awake For ▸` and hardware splits to row tooltips.**
+  - Relocated the machine sleep-hold status row and indented foreign assertion rows directly into `Keep Awake For ▸`.
+  - Moved secondary per-source splits (`CPU` P/E cores, `GPU` Renderer/Tiler, `Memory` swap, `Fan` per-fan RPM, `Temperature` sensor spread) onto the hover `toolTip` of each corresponding row in the root menu, eliminating the `Diagnostics` submenu.
+
 ## [3.2.0] - 2026-11-10
 
 ### Changed

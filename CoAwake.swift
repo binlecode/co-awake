@@ -723,7 +723,6 @@ private enum MenuTitle {
     static let displayTraceItem = "Trace Chart"
     static let displayValueItem = "Live Value"
     static let reduceMotionHandoffRow = "↳ GIF paused — Reduce Motion is on (showing Live Value)"
-    static let animationSpeedPausedReduceMotion = "paused (Reduce Motion)"
 
     static let startAtLogin = "Start at Login"
 
@@ -754,14 +753,6 @@ private enum MenuTitle {
 
     // Self-throttle line.
     static let slowingAnimation = "Slowing animation"
-
-    // The read-only second level: sleep-assertion evidence, per-source splits, and the live animation
-    // multiplier — what the root rows deliberately leave out so each carries one figure.
-    static let diagnostics = "Diagnostics"
-    static let animationSpeed = "Animation Speed"
-    static func animationSpeedValue(_ multiplier: Double, auto: Bool) -> String {
-        String(format: "%.2fx (%@)", multiplier, auto ? "auto" : "fixed")
-    }
 
     // The root menu's first row: one click, one meaning — Start when the intent is off, Stop when it
     // is on — composed segment by segment (action · stop condition · holding state) so the three
@@ -803,18 +794,8 @@ private enum MenuTitle {
     }
     static func keepAwakeProcessRow(_ label: String) -> String { keepAwakeUntilExitsSegment(label) }
 
-    // "Other Assertions" — the read-only section listing OTHER processes' sleep assertions. The row is
-    // owner + raw assertion type and nothing else. Rendering the type verbatim rather than glossing it
-    // ("prevents idle sleep") is the whole discipline of the section: the gloss is an effect claim this
-    // data can't support, and the raw string is what `pmset -g assertions` prints, so a user checking the
-    // app against the system reads the same vocabulary. `none` is a ROW, not an empty section — it is the
-    // answer to the question someone opened this menu with.
-    static let otherAssertions = "Other Assertions"
-    static let otherAssertionsNone = "none"
-    // One row per owner, listing every type it holds: `caffeinate — PreventUserIdleDisplaySleep,
-    // PreventUserIdleSystemSleep ×2`. The ×N rides the TYPE, not the owner, so no information is lost
-    // relative to the per-type rows this replaced — "which types, and how many of each" still reads off
-    // the row exactly.
+    // Indented rows under the machine-state row in `Keep Awake For ▸` listing OTHER processes' sleep
+    // assertions, summarized by display vs idle hold count.
     static func otherAssertionRow(owner: String, types: [(type: String, count: Int)]) -> String {
         var displayCount = 0
         var idleCount = 0
@@ -1664,7 +1645,7 @@ private struct Config {
         let bin = (envBin?.isEmpty == false) ? envBin! : URL(fileURLWithPath: CommandLine.arguments[0]).lastPathComponent
         let sources = LoadSource.allCases.map(\.key).joined(separator: "|")
         let pct = { (fraction: Double) in Int((fraction * Tuning.percentScale).rounded()) }
-        print("""
+        let text = """
         co-awake \(AppInfo.version) — menu-bar load monitor. Commands print one JSON line; the menu is for people.
 
         Usage: \(bin) [start] [settings] [launch-only]
@@ -1704,7 +1685,9 @@ private struct Config {
           long-job.sh & \(bin) --keep-awake-pid $!
           \(bin) status | jq -e .running
           \(bin) snapshot | jq .temp_c
-        """)
+        """ + "\n"
+        fputs(text, stdout)
+        fflush(stdout)
     }
 }
 
@@ -4693,12 +4676,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // otherSourceRowItems pattern: refresh must never add or remove NSMenuItems.
     private var otherAssertionRowItems: [NSMenuItem] = []
     private var otherAssertionsMoreItem: NSMenuItem!
-    // Diagnostics ▸ rows, pre-created once and driven by title/isHidden: one split row per source
-    // (hidden whenever breakdownText(for:) has nothing valid) and the animation-multiplier row.
-    private var diagnosticsSplitSeparatorItem: NSMenuItem!
-    private var diagnosticItems: [LoadSource: NSMenuItem] = [:]
-    private var animationSpeedSeparatorItem: NSMenuItem!
-    private var animationSpeedItem: NSMenuItem!
     private let assertionMonitor = SleepAssertionMonitor()
     // The armed window, kept alongside the deadline because remaining time alone can't say which row
     // to mark (it shrinks). `.indefinite` whenever no window is armed.
@@ -4903,11 +4880,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         reduceMotionStatusItem.isHidden = true
         infoMenu.addItem(reduceMotionStatusItem)
 
-        // Read-only second level: sleep assertions, per-source splits, animation multiplier.
-        infoMenu.addItem(NSMenuItem.separator())
-        infoMenu.addItem(makeDiagnosticsMenuItem())
-
         // Low-frequency configuration and app lifecycle, one level down.
+        infoMenu.addItem(NSMenuItem.separator())
         infoMenu.addItem(makeSettingsMenuItem())
 
         infoMenu.addItem(NSMenuItem.separator())
@@ -5136,6 +5110,9 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         keepAwakeSubmenu.addItem(NSMenuItem.separator())
         keepAwakeSubmenu.addItem(makeBatteryThresholdMenuItem())
 
+        keepAwakeSubmenu.addItem(NSMenuItem.separator())
+        makeSleepAssertionItems().forEach(keepAwakeSubmenu.addItem)
+
         keepAwakeMenuItem.submenu = keepAwakeSubmenu
         return keepAwakeMenuItem
     }
@@ -5163,34 +5140,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         otherAssertionsMoreItem.isHidden = true
         items.append(otherAssertionsMoreItem)
         return items
-    }
-
-    // Diagnostics ▸ — every row is read-only. Three sections: who holds this Mac awake, the secondary
-    // split behind each root readout, and the live animation multiplier. Rows are addressed through
-    // stored references, so the move from the root menu leaves LOG_AWAKE's `row=` untouched.
-    private func makeDiagnosticsMenuItem() -> NSMenuItem {
-        let parentItem = NSMenuItem(title: MenuTitle.diagnostics, action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: MenuTitle.diagnostics)
-        makeSleepAssertionItems().forEach(submenu.addItem)
-
-        diagnosticsSplitSeparatorItem = NSMenuItem.separator()
-        submenu.addItem(diagnosticsSplitSeparatorItem)
-        for source in LoadSource.allCases {
-            let item = NSMenuItem(title: source.menuTitle, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            item.isHidden = true   // until refreshDiagnosticsState finds a valid split
-            submenu.addItem(item)
-            diagnosticItems[source] = item
-        }
-
-        animationSpeedSeparatorItem = NSMenuItem.separator()
-        submenu.addItem(animationSpeedSeparatorItem)
-        animationSpeedItem = NSMenuItem(title: MenuTitle.line(MenuTitle.animationSpeed, MenuTitle.placeholderValue), action: nil, keyEquivalent: "")
-        animationSpeedItem.isEnabled = false
-        submenu.addItem(animationSpeedItem)
-
-        parentItem.submenu = submenu
-        return parentItem
     }
 
     // Settings ▸ — appearance, login item, and the one update row. Submenu items need an explicit
@@ -7209,6 +7158,13 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }
     }
 
+    private func sourceTooltipText(for source: LoadSource) -> String? {
+        if source == .battery {
+            return batteryTooltipText()
+        }
+        return breakdownText(for: source)
+    }
+
     // Update the unified per-source rows.
     private func refreshSourceListState() {
         for source in LoadSource.allCases {
@@ -7220,33 +7176,8 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             }
             item.isHidden = false
             item.title = telemetry.hasSample(source) ? usageLineText(for: source) : MenuTitle.line(source.menuTitle, MenuTitle.warmingUp)
-            item.toolTip = (source == .battery) ? batteryTooltipText() : nil
+            item.toolTip = sourceTooltipText(for: source)
             item.state = (source == activeLoadSource) ? .on : .off
-        }
-        refreshDiagnosticsState()
-    }
-
-    // Diagnostics ▸ rows, written in the same pass as the root rows so the two levels never disagree
-    // (a root row reading "warming up..." beside a split still showing). Visibility is breakdownText's
-    // call alone — nil hides the row.
-    private func refreshDiagnosticsState() {
-        var hasVisibleSplit = false
-        for (source, item) in diagnosticItems {
-            if let text = breakdownText(for: source) {
-                item.title = MenuTitle.line(source.menuTitle, text)
-                item.isHidden = false
-                hasVisibleSplit = true
-            } else {
-                item.isHidden = true
-            }
-        }
-        diagnosticsSplitSeparatorItem?.isHidden = !hasVisibleSplit
-        let showSpeed = (effectiveDisplayMode == .gif)
-        animationSpeedSeparatorItem?.isHidden = !showSpeed
-        animationSpeedItem.isHidden = !showSpeed
-        if showSpeed {
-            let speedText = MenuTitle.animationSpeedValue(speedMultiplier, auto: isAutoSpeed)
-            animationSpeedItem.title = MenuTitle.line(MenuTitle.animationSpeed, speedText)
         }
     }
 
@@ -8397,6 +8328,7 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
 // not a GUI at all (a `status`, a `snapshot`, another `start`), must survive being picked as the target.
 // The GUI replaces this with a dispatch source once it can listen (setupSignalHandler).
 signal(SIGUSR1, SIG_IGN)
+signal(SIGPIPE, SIG_IGN)
 _ = AppInfo.version
 
 switch Config.parse() {

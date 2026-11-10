@@ -783,15 +783,14 @@ and rarely changed settings.** Every row is a standard `NSMenuItem`.
 ```
   +--------------------------------------------------+
   | Stop Keep Awake . 29:58 left                     |  <- first row: state + toggle (§ 7.6)
-  | Keep Awake For                                 > |  <- durations, status row, release threshold
+  | Keep Awake For                                 > |  <- durations, release threshold, sleep assertions
   |--------------------------------------------------|
-  | * CPU: 12%                                       |  <- 10 readout rows = one radio group
+  | * CPU: 12%                                       |  <- 10 readout rows = one radio group (hover for split)
   |   Memory: 64%                                    |     click -> setLoadSource
   |   ...                                            |     unavailable source -> row hidden
   |   ANE: 0.31 W                                    |
   |   -> Slowing animation - thermal                 |  <- only while self-throttling (§ 5.2)
   |--------------------------------------------------|
-  | Diagnostics                                    > |  <- assertions, splits, animation speed
   | Settings                                       > |  <- "Settings . Update available" when a
   |--------------------------------------------------|     newer tag is known (§ 9.2)
   | About                                            |
@@ -807,15 +806,15 @@ and rarely changed settings.** Every row is a standard `NSMenuItem`.
   it is accepted are in § 6.4.
 - **Row order is fixed** (`LoadSource.allCases`), never by value (§ 6.4): titles change every 2 s while
   the menu is open; positions never do.
-- **One primary value per root row.** Which half of the chip, which pipeline stage, which fan — those
-  splits live one level down (§ 8.1), and so does the animation multiplier. The selection mark already
-  says which row drives the animation, so the row needs no "active" suffix.
-- **`Diagnostics ▸`** holds the sleep-assertion view (§ 7.3), one split row per source that has one, and
-  `Animation Speed` (`1.25x (auto)` / `(fixed)`). Its rows are written in the same `refreshSourceListState()`
-  pass as the root rows, so the two levels cannot disagree.
-- **`Settings ▸`** holds Display Mode, Runner Preset, Indicator Bar Tint, Start at Login and the single
-  update row (§ 9.2). `Runner Preset ▸` is shown in every display mode (§ 6.4). Submenu items get
-  `target = self` explicitly: the root-level target wiring does not reach into submenus.
+- **One primary value per root row, secondary splits in hover tooltips.** Which half of the chip, which
+  pipeline stage, which fan, or battery health/cycles — those secondary splits live on each root row's
+  `toolTip` (`sourceTooltipText(for:)` / `breakdownText(for:)`), eliminating duplicate hardware rows.
+- **`Keep Awake For ▸`** holds the duration/process window selector, the battery release threshold, and
+  the machine-wide sleep assertion view (§ 7.3).
+- **`Settings ▸`** holds Display Mode, Runner Preset, Indicator Bar Tint (shown only when a full-color
+  GIF preset is active in `Runner GIF` mode), Start at Login and the single update row (§ 9.2). `Runner Preset ▸`
+  is shown in every display mode (§ 6.4). Submenu items get `target = self` explicitly: the root-level
+  target wiring does not reach into submenus.
 - **Refresh cadence:** no menu-specific timer. Readouts follow `refreshMenuMetrics()` (2 s tick +
   `menuWillOpen`); the first row's countdown follows the existing 1 s ticker (§ 6.2), which runs in
   `.common` run-loop mode and therefore keeps firing while the menu is tracking.
@@ -1050,9 +1049,9 @@ Two root rows carry more than a number, and both exist for **honesty**:
 - **`· Thermal Throttling`** — the kernel is throttling the machine (§ 5.2). That is what the row is
   watched for at that moment, so it stays on the root row.
 
-**Splits live in `Diagnostics ▸`** via `breakdownText(for:)` (CPU P/E, GPU Renderer/Tiler, swap used/total
-and swap rate, P-core temperature spread and sensor count or `every core cluster parked`, per-fan RPM,
-battery current and health). A split row is visible only when **both** layers hold:
+**Secondary splits live on each root row's hover tooltip** via `sourceTooltipText(for:)` / `breakdownText(for:)`
+(CPU P/E, GPU Renderer/Tiler, swap used/total and swap rate, temperature sensor spread and count,
+multi-fan RPM, and battery health/cycles/capacity). A tooltip split is populated only when **both** layers hold:
 
 ```
   telemetry.hasSample(source)                <- source-level: any sample at all
