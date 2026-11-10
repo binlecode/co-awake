@@ -25,6 +25,7 @@ Shared guidance for Claude Code and coding agents working in this repository.
 8. 🔴 **动词 CLI 与单一输出契约**：首参只放动词（`start`·`status`·`snapshot`·`presets`·`build`）；输出只有一份 Schema，字段自带物理单位，缺读数一律缺键（不补 0 或 null）；严禁新增兼容别名或双前缀回退。
 9. 🔴 **脚本兼容性**：启动器与周边脚本必须严格保证 `/bin/bash` 3.2 与 macOS 原生 `/bin/zsh` 兼容性。
 10. 🔴 **本地安装升级 SOP（Release-First via GitHub）**：严禁从开发工作区直接拷贝文件或越过 Git 覆盖 `~/.local/share/co-awake`；升级本机常驻安装必须先按 `docs/ARCHITECTURE.md` §13 完成版本发布并推送至 GitHub（`main` + `vX.Y.Z` tag），再通过标准 GitHub 安装升级流（`curl -fsSL https://raw.githubusercontent.com/binlecode/co-awake/main/install.sh | bash -s -- --login`）从 `origin` 拉取更新。
+    - **常驻进程重启与验真陷阱**：`awake --help` 仅读取磁盘 `VERSION`，**绝不能证明内存中的常驻进程已换新**！若旧常驻实例曾由 CLI detached 模式（或应用内自重启）拉起而非 `launchd` 托管，`launchctl bootout/bootstrap` 不会终止该旧 PID，新拉起的 `CoAwake start` 会因单例互斥输出 `{"action":"unchanged"}` 立即退出，导致旧版本继续驻留内存。升级前后必须通过 `awake status` 记录旧 PID 与无限期 Keep Awake 状态；升级后必须核查 `launchctl print gui/$(id -u)/com.binle.coawake`（确认 `state = running` 且 `pid` 为新进程、`ps -p <pid> -o lstart` 为当前时间），若仍为旧 detached PID 则显式 `kill <old_pid>` 后执行 `launchctl kickstart gui/$(id -u)/com.binle.coawake`，并在原先开启无限期 Keep Awake 时补发 `awake --keep-awake on` 恢复状态。
 
 ---
 

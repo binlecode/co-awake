@@ -1502,6 +1502,8 @@ silently, and nothing upstream catches it:
    A tag that never left your machine tells every installed copy the old version is current, silently,
    with the local repo looking fully released. Sort `-V`, never plain `sort`: lexically `v1.9.1` beats
    `v1.19.2`, which stopped being hypothetical at `v1.10.0`.
+7. **When upgrading the local resident install (`install.sh --login`), verify the live PID — never trust `awake --help` alone:**
+   `awake --help` runs a transient process that reads `VERSION` from disk, so it prints the new version even if the resident menu-bar process in memory is still the old build. If the existing resident instance was started detached (via CLI `awake` or in-app restart) rather than supervised by `launchd`, `launchctl bootout` will not stop it, and `launchctl bootstrap` will run `CoAwake start` which sees the old PID, emits `{"action":"unchanged"}` to `~/Library/Logs/co-awake.log`, and exits — leaving the old binary running. Always compare `awake status` PID + `ps -p <pid> -o lstart` and `launchctl print gui/$(id -u)/com.binle.coawake` (`state = running`); if an old detached PID survived, terminate that exact PID, `launchctl kickstart gui/$(id -u)/com.binle.coawake`, and re-arm indefinite Keep Awake (`awake --keep-awake on`) if it was previously active.
 
 Ship when `tests/qa.sh` says ALL PASS, and **no NOTE covers what
 this release changed** — a NOTE is an unanswered case, not an accepted one, and neighbouring cases
