@@ -676,17 +676,11 @@ private enum Tuning {
 private enum MenuTitle {
     // Group 1 — static, single-site labels (moved for inventory completeness).
     static let keepAwake = "Keep Awake"
-    static let displayMode = "Display Mode"
-    static let runnerPresets = "Runner Preset"
     static let indicatorTint = "Indicator Bar Tint"
     static let presets = "Presets"
     static let about = "About"
     static let exit = "Exit"
     static let clear = "Clear"
-
-    // Settings ▸ — the root row also carries the only root-level hint that a newer release is known.
-    static let settings = "Settings"
-    static let settingsUpdateAvailable = "Settings · Update available"
 
     // Update-check row: one row whose title and action follow `updatePhase` (refreshUpdateStatus).
     static func updateTo(_ tag: String) -> String { "Update to \(tag)…" }
@@ -4538,7 +4532,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
     // Settings ▸ — check, progress, or "Update to …" — and `settingsMenuItem` is its root parent, whose
     // title flags a known newer release. Both driven by refreshUpdateStatus(). See SemVer / UpdateChecker.
     private var latestKnownVersion: SemVer?
-    private var settingsMenuItem: NSMenuItem!
     private var updateMenuItem: NSMenuItem!
     // Where the update flow is, which is both the re-entrancy guard (so overlapping manual checks
     // can't stack git processes) and what the menu row reports. `.building` is a real third state, not
@@ -4880,11 +4873,17 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         reduceMotionStatusItem.isHidden = true
         infoMenu.addItem(reduceMotionStatusItem)
 
-        // Low-frequency configuration and app lifecycle, one level down.
+        // Display mode radio section at top level; Runner GIF carries the presets submenu.
         infoMenu.addItem(NSMenuItem.separator())
-        infoMenu.addItem(makeSettingsMenuItem())
+        makeDisplayModeMenuItems().forEach(infoMenu.addItem)
+        infoMenu.addItem(makeKeepAwakeTintMenuItem())
 
+        // App lifecycle and low-frequency options at top level.
         infoMenu.addItem(NSMenuItem.separator())
+        startAtLoginMenuItem = makeSelectionItem(MenuTitle.startAtLogin, action: #selector(toggleStartAtLogin(_:)))
+        infoMenu.addItem(startAtLoginMenuItem)
+        updateMenuItem = NSMenuItem(title: MenuTitle.checkForUpdates, action: #selector(checkForUpdates), keyEquivalent: "")
+        infoMenu.addItem(updateMenuItem)
         infoMenu.addItem(NSMenuItem(title: MenuTitle.about, action: #selector(showAbout), keyEquivalent: ""))
         infoMenu.addItem(NSMenuItem(title: MenuTitle.exit, action: #selector(exitApp), keyEquivalent: "q"))
         // Root items only — anything nested in a submenu sets its own target at construction.
@@ -5142,27 +5141,6 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         return items
     }
 
-    // Settings ▸ — appearance, login item, and the one update row. Submenu items need an explicit
-    // target: the root-level target wiring in applicationDidFinishLaunching doesn't reach them.
-    private func makeSettingsMenuItem() -> NSMenuItem {
-        settingsMenuItem = NSMenuItem(title: MenuTitle.settings, action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: MenuTitle.settings)
-        submenu.addItem(makeDisplayModeMenuItem())
-        submenu.addItem(makePresetsMenuItem())
-        submenu.addItem(makeKeepAwakeTintMenuItem())
-
-        submenu.addItem(NSMenuItem.separator())
-        startAtLoginMenuItem = makeSelectionItem(MenuTitle.startAtLogin, action: #selector(toggleStartAtLogin(_:)))
-        submenu.addItem(startAtLoginMenuItem)
-        // Title / action are rewritten by refreshUpdateStatus(); hidden when this isn't a git checkout.
-        updateMenuItem = NSMenuItem(title: MenuTitle.checkForUpdates, action: #selector(checkForUpdates), keyEquivalent: "")
-        submenu.addItem(updateMenuItem)
-
-        submenu.items.forEach { $0.target = self }
-        settingsMenuItem.submenu = submenu
-        return settingsMenuItem
-    }
-
     private func makeKeepAwakeTintMenuItem() -> NSMenuItem {
         let parentItem = NSMenuItem(title: MenuTitle.indicatorTint, action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: MenuTitle.indicatorTint)
@@ -5185,21 +5163,14 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         persistState()
     }
 
-    private func makeDisplayModeMenuItem() -> NSMenuItem {
-        let parentItem = NSMenuItem(title: MenuTitle.displayMode, action: nil, keyEquivalent: "")
-        let submenu = NSMenu(title: MenuTitle.displayMode)
-
+    private func makeDisplayModeMenuItems() -> [NSMenuItem] {
         runnerGifDisplayItem = makeSelectionItem(MenuTitle.displayGifItem, action: #selector(selectGifDisplayMode))
-        submenu.addItem(runnerGifDisplayItem)
+        runnerGifDisplayItem.submenu = makePresetsSubmenu()
 
         traceChartPresetItem = makeSelectionItem(MenuTitle.displayTraceItem, action: #selector(selectTraceChartPreset))
-        submenu.addItem(traceChartPresetItem)
-
         liveValuePresetItem = makeSelectionItem(MenuTitle.displayValueItem, action: #selector(selectLiveValuePreset))
-        submenu.addItem(liveValuePresetItem)
 
-        parentItem.submenu = submenu
-        return parentItem
+        return [runnerGifDisplayItem, traceChartPresetItem, liveValuePresetItem]
     }
 
     @objc
@@ -5207,17 +5178,15 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         setDisplayMode(.gif)
     }
 
-    private func makePresetsMenuItem() -> NSMenuItem {
-        let presetsMenuItem = NSMenuItem(title: MenuTitle.runnerPresets, action: nil, keyEquivalent: "")
-        let presetsSubmenu = NSMenu(title: MenuTitle.runnerPresets)
+    private func makePresetsSubmenu() -> NSMenu {
+        let presetsSubmenu = NSMenu(title: MenuTitle.displayGifItem)
 
         for (index, preset) in allPresets.enumerated() {
             let item = makeSelectionItem(preset.menuTitle, action: #selector(selectPreset(_:)), tag: index)
             presetsSubmenu.addItem(item)
             presetMenuItems.append(item)
         }
-        presetsMenuItem.submenu = presetsSubmenu
-        return presetsMenuItem
+        return presetsSubmenu
     }
 
     // MARK: - Quit & About
@@ -5312,13 +5281,11 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
         }()
         guard repoDirURL != nil else {
             updateMenuItem.isHidden = true
-            settingsMenuItem.title = MenuTitle.settings
             return
         }
         updateMenuItem.isHidden = false
         updateMenuItem.attributedTitle = nil
         updateMenuItem.target = self
-        var updateAvailable = false
         switch updatePhase {
         case .checking:
             updateMenuItem.title = MenuTitle.checkingForUpdates
@@ -5330,13 +5297,11 @@ private final class CoAwakeApp: NSObject, NSApplicationDelegate, NSMenuDelegate 
             if let newer {
                 updateMenuItem.title = MenuTitle.updateTo(newer.tagString)
                 updateMenuItem.action = #selector(promptSelfUpdate)
-                updateAvailable = true
             } else {
                 updateMenuItem.title = MenuTitle.checkForUpdates
                 updateMenuItem.action = #selector(checkForUpdates)
             }
         }
-        settingsMenuItem.title = updateAvailable ? MenuTitle.settingsUpdateAvailable : MenuTitle.settings
     }
 
     // Kicks off a single off-main `ls-remote` probe. Fail-silent for the launch check; a user-initiated

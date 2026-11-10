@@ -727,7 +727,7 @@
           <button type="button" data-mode="trace" aria-pressed="false">Trace Chart</button>
           <button type="button" data-mode="value" aria-pressed="false">Live Value</button>
         </div>
-        <p class="readout-note">…and the dropdown gives direct control: one-click Keep Awake, all 10 live hardware telemetry rows (click any row to switch what drives the slot, hover for secondary splits), and Settings.</p>
+        <p class="readout-note">…and the dropdown gives direct control: one-click Keep Awake, all 10 live hardware telemetry rows (click any row to switch what drives the slot, hover for secondary splits), and the 3-mode display radio group (<span class="mono">Runner GIF ▸</span> presets, <span class="mono">Trace Chart</span>, <span class="mono">Live Value</span>).</p>
       </div>
       <div class="readout-stage">
         <div class="barmock" role="img" aria-label="A macOS menu bar with a live status item">
@@ -752,15 +752,19 @@
           <div class="drow" data-metric="ANE 1.4W" data-pct="58"><span class="k">&nbsp;&nbsp;ANE</span><span class="v">1.40 W</span></div>
           <div class="drow" data-metric="BW 58.3 GB/s" data-pct="43"><span class="k">&nbsp;&nbsp;Memory Bandwidth</span><span class="v">58.3 GB/s</span></div>
           <div class="dsep"></div>
-          <div class="drow drow-sub"><span class="k">Settings</span><span class="v">▸</span></div>
+          <div class="drow drow-sub"><span class="k">● Runner GIF</span><span class="v">▸</span></div>
+          <div class="drow drow-sub"><span class="k">&nbsp;&nbsp;Trace Chart</span><span class="v"></span></div>
+          <div class="drow drow-sub"><span class="k">&nbsp;&nbsp;Live Value</span><span class="v"></span></div>
           <div class="dsep"></div>
-          <div class="drow drow-sub"><span class="k">About</span><span class="v"></span></div>
-          <div class="drow drow-sub"><span class="k">Quit co-awake</span><span class="v">⌘Q</span></div>
+          <div class="drow drow-sub"><span class="k">● Start at Login</span><span class="v"></span></div>
+          <div class="drow drow-sub"><span class="k">&nbsp;&nbsp;Check for Updates…</span><span class="v"></span></div>
+          <div class="drow drow-sub"><span class="k">&nbsp;&nbsp;About</span><span class="v"></span></div>
+          <div class="drow drow-sub"><span class="k">&nbsp;&nbsp;Exit</span><span class="v">⌘Q</span></div>
         </div>
         <span class="caption" id="labelCaption">flip the display modes — runner GIF, trace chart, or live value</span>
       </div>
     </div>
-    <p class="heroBar cap">Default is runner GIF; switchable live from <span class="mono">Settings ▸ Display Mode</span>, or via <span class="mono">awake --display &lt;gif|trace|value&gt;</span> / <span class="mono">CO_AWAKE_DISPLAY</span>.</p>
+    <p class="heroBar cap">Default is runner GIF; switchable live in the top-level menu (<span class="mono">Runner GIF ▸</span> / <span class="mono">Trace Chart</span> / <span class="mono">Live Value</span>), or via <span class="mono">awake --display &lt;gif|trace|value&gt;</span> / <span class="mono">CO_AWAKE_DISPLAY</span>.</p>
   </section>
 
   <section id="cast">
@@ -1057,7 +1061,7 @@
         <div class="fact"><h4>The one reading it refuses to poll</h4><p>Open the menu on a Mac with a battery and it reports <b>health, cycle count and capacity</b> — <span class="mono">100% health · 113 cycles</span>, <span class="mono">Normal · 8478/8579 mAh</span>, with the full breakdown on hover. Read straight from <b><span class="mono">AppleSmartBattery</span></b> in the IORegistry, <b>no privileges, no helper</b>. And unlike every other figure here it is <b>never sampled on a timer</b>: health moves over months, so it's read the moment you open the menu and dropped when you close it. A desktop Mac with no battery sees the menu exactly as it was.</p></div>
         <div class="fact"><h4>Three answers for scripts and agents</h4><p>The core serves headless consumers directly. <span class="mono">snapshot</span> prints every physical reading as <b>one line of JSON</b> (including AC status and kernel memory pressure); <span class="mono">status</span> inspects resident hold state; and <span class="mono">start</span> is idempotent — run against an instance already up, it forwards the settings through a per-request spool and a POSIX signal. Pure unprivileged CLI, zero socket debt.</p></div>
         <div class="fact"><h4>Data-driven presets</h4><p>Keyword, menu title, and speed range all live in <b><span class="mono">presets.json</span></b> (width comes from the GIF's own aspect ratio). Add a preset by editing data — zero Swift changes.</p></div>
-        <div class="fact"><h4>Checks for its own updates</h4><p>On launch it reads your checkout's origin release tags — <b>the only network call the app ever makes</b>. A newer tag turns the menu's <span class="mono">Settings</span> row into <span class="mono">Settings · Update available</span>; applying it is a deliberate <b>two-click</b> action (<span class="mono">git pull --ff-only</span>), never automatic. It then <b>compiles the new version while still running</b> — the menu reads <span class="mono">Building v{{VERSION}}…</span> — so the <span class="mono">Restart</span> that follows takes about a second instead of leaving an empty menu bar waiting on a build. Settings and the preset you picked carry over.</p></div>
+        <div class="fact"><h4>Checks for its own updates</h4><p>On launch it reads your checkout's origin release tags — <b>the only network call the app ever makes</b>. A newer tag turns the menu's <span class="mono">Check for Updates…</span> row into <span class="mono">Update to vX.Y.Z…</span>; applying it is a deliberate <b>two-click</b> action (<span class="mono">git pull --ff-only</span>), never automatic. It then <b>compiles the new version while still running</b> — the menu reads <span class="mono">Building v{{VERSION}}…</span> — so the <span class="mono">Restart</span> that follows takes about a second instead of leaving an empty menu bar waiting on a build. Settings and the preset you picked carry over.</p></div>
         <div class="fact"><h4>One line in, one line out</h4><p>Install with a single <span class="mono">curl … | bash</span> — it clones, compiles, and symlinks onto your <span class="mono">PATH</span>; <span class="mono">uninstall.sh</span> reverses exactly what it created. <b>Open source (MIT)</b>, no signing or Homebrew.</p></div>
       </div>
     </div>

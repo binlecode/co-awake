@@ -38,6 +38,14 @@ of the public API and may change in any release.
 
 ## [Unreleased]
 
+## [3.2.2] - 2026-11-10
+
+### Changed
+
+- **Flatten `Settings` into the top-level menu; nest presets under `Runner GIF ▸`.**
+  - Removed the `Settings ▸` wrapper row and promoted `Start at Login` and `Check for Updates…` (or `Update to vX.Y.Z…`) directly to the top-level menu.
+  - Collapsed `Display Mode` into a top-level 3-option radio group (`Runner GIF ▸`, `Trace Chart`, `Live Value`), with the 10 GIF presets directly nested as the submenu of `Runner GIF ▸`.
+
 ## [3.2.1] - 2026-11-10
 
 ### Changed

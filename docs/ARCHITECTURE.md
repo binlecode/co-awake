@@ -791,10 +791,15 @@ and rarely changed settings.** Every row is a standard `NSMenuItem`.
   |   ANE: 0.31 W                                    |
   |   -> Slowing animation - thermal                 |  <- only while self-throttling (§ 5.2)
   |--------------------------------------------------|
-  | Settings                                       > |  <- "Settings . Update available" when a
-  |--------------------------------------------------|     newer tag is known (§ 9.2)
-  | About                                            |
-  | Exit                                         Q   |
+  | * Runner GIF                                   > |  <- 3-option display mode radio group;
+  |   Trace Chart                                    |     Runner GIF submenu holds the 10 GIF presets
+  |   Live Value                                     |
+  |   Indicator Bar Tint                           > |  <- shown only when a colored GIF is active
+  |--------------------------------------------------|
+  | * Start at Login                                 |
+  |   Check for Updates...                           |  <- or "Update to vX.Y.Z..." when a newer tag is known
+  |   About                                          |
+  |   Exit                                        Q  |
   +--------------------------------------------------+
   ( * = selectionMarkImage dot, . = middle dot, -> = hook arrow )
 ```
@@ -811,10 +816,10 @@ and rarely changed settings.** Every row is a standard `NSMenuItem`.
   `toolTip` (`sourceTooltipText(for:)` / `breakdownText(for:)`), eliminating duplicate hardware rows.
 - **`Keep Awake For ▸`** holds the duration/process window selector, the battery release threshold, and
   the machine-wide sleep assertion view (§ 7.3).
-- **`Settings ▸`** holds Display Mode, Runner Preset, Indicator Bar Tint (shown only when a full-color
-  GIF preset is active in `Runner GIF` mode), Start at Login and the single update row (§ 9.2). `Runner Preset ▸`
-  is shown in every display mode (§ 6.4). Submenu items get `target = self` explicitly: the root-level
-  target wiring does not reach into submenus.
+- **Top-level Display Mode radio group (`Runner GIF ▸` · `Trace Chart` · `Live Value`):** `Runner GIF ▸`
+  carries the GIF preset submenu (`makePresetsSubmenu()`); `Indicator Bar Tint ▸` appears directly below
+  when a full-color GIF preset is active in `Runner GIF` mode. `Start at Login` and the single update row
+  (`Check for Updates…` / `Update to vX.Y.Z…`, § 9.2) live in the bottom section alongside `About` and `Exit`.
 - **Refresh cadence:** no menu-specific timer. Readouts follow `refreshMenuMetrics()` (2 s tick +
   `menuWillOpen`); the first row's countdown follows the existing 1 s ticker (§ 6.2), which runs in
   `.common` run-loop mode and therefore keeps firing while the menu is tracking.
